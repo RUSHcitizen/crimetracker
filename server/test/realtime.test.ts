@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Incident, ServerFrame, SnapshotFrame, Stats } from '@crimetracker/shared';
+import {
+  IncidentRepository, SimulationGenerator, type Incident, type ServerFrame, type SnapshotFrame, type Stats } from '@crimetracker/shared';
 import { RealtimeHub, type HubClient } from '../src/pipeline/hub.js';
 import { openDatabase } from '../src/db/database.js';
-import { IncidentRepository } from '../src/db/repository.js';
 import { IngestionPipeline } from '../src/pipeline/ingest.js';
 import { loadConfig } from '../src/config.js';
-import { SimulationGenerator } from '../src/sim/generator.js';
 import { SIMULATION_DESCRIPTOR } from '../src/sources/simulation.js';
 import type { DataSource } from '../src/sources/types.js';
 
@@ -148,7 +147,7 @@ describe('IngestionPipeline → hub', () => {
   it('broadcasts accepted incidents, then patterns and stats', async () => {
     vi.useFakeTimers();
     const db = openDatabase(':memory:');
-    const repository = new IncidentRepository(db);
+    const repository = new IncidentRepository(db.driver);
     repository.upsertSource(SIMULATION_DESCRIPTOR);
 
     const hub = new RealtimeHub(20);
@@ -183,7 +182,7 @@ describe('IngestionPipeline → hub', () => {
   it('advances a new incident through its processing states', async () => {
     vi.useFakeTimers();
     const db = openDatabase(':memory:');
-    const repository = new IncidentRepository(db);
+    const repository = new IncidentRepository(db.driver);
     repository.upsertSource(SIMULATION_DESCRIPTOR);
 
     const hub = new RealtimeHub(20);
@@ -233,7 +232,7 @@ describe('websocket endpoint', () => {
     ]);
 
     const db = openDatabase(':memory:');
-    const repository = new IncidentRepository(db);
+    const repository = new IncidentRepository(db.driver);
     repository.upsertSource(SIMULATION_DESCRIPTOR);
 
     const hub = new RealtimeHub(20);

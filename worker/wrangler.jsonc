@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "crimetracker",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // The built client is served straight from the Worker, so the API, the WebSocket and
+  // the page are all same-origin — no CORS, and no second deployment to keep in step.
+  "assets": {
+    "directory": "../web/dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application"
+  },
+
+  "durable_objects": {
+    "bindings": [{ "name": "TRACKER", "class_name": "TrackerRoom" }]
+  },
+
+  // `new_sqlite_classes` gives the Durable Object an embedded SQLite database, which is
+  // what the incident store runs on.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["TrackerRoom"] }],
+
+  "observability": { "enabled": true },
+
+  // The Durable Object drives itself with alarms, which survive eviction. This cron is
+  // belt-and-braces: it nudges the room awake if it has been idle with no alarm pending
+  // and no client connected.
+  "triggers": { "crons": ["*/5 * * * *"] },
+
+  "vars": {
+    "MODE": "simulation",
+    "SIM_INTERVAL_SECONDS": "20",
+    "SIM_BACKFILL": "2400",
+    "SIM_BACKFILL_HOURS": "12",
+    "RETENTION_HOURS": "168",
+    "PATTERN_WINDOW_MINUTES": "45",
+    "PATTERN_EPS_KM": "0.9",
+    "PATTERN_MIN_POINTS": "5"
+  }
+}

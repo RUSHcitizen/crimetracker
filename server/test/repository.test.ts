@@ -1,9 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { Incident, SourceDescriptor } from '@crimetracker/shared';
-import { normalizeIncident } from '@crimetracker/shared';
-import { openDatabase, type Database } from '../src/db/database.js';
-import { IncidentRepository } from '../src/db/repository.js';
-import { SimulationGenerator } from '../src/sim/generator.js';
+import {
+  IncidentRepository,
+  normalizeIncident,
+  SimulationGenerator,
+  type Incident,
+  type SourceDescriptor,
+} from '@crimetracker/shared';
+import { openDatabase, type OpenedDatabase } from '../src/db/database.js';
 
 const SOURCE: SourceDescriptor = {
   id: 'repo-test',
@@ -12,12 +15,12 @@ const SOURCE: SourceDescriptor = {
   note: 'unit test',
 };
 
-let db: Database;
+let db: OpenedDatabase;
 let repo: IncidentRepository;
 
 beforeEach(() => {
   db = openDatabase(':memory:');
-  repo = new IncidentRepository(db);
+  repo = new IncidentRepository(db.driver);
   repo.upsertSource(SOURCE);
 });
 
@@ -159,7 +162,7 @@ describe('IncidentRepository', () => {
     };
     repo.recordClusters([cluster]);
     repo.recordClusters([cluster]);
-    const rows = db.prepare('SELECT COUNT(*) AS n FROM clusters').get() as { n: number };
+    const rows = db.driver.get<{ n: number }>('SELECT COUNT(*) AS n FROM clusters')!;
     expect(rows.n).toBe(1);
   });
 
@@ -174,9 +177,10 @@ describe('IncidentRepository', () => {
     );
     if (!result.ok) throw new Error(result.reason);
     repo.insertIncident(result.incident);
-    const row = db.prepare('SELECT raw FROM incidents WHERE id = ?').get(result.incident.id) as {
-      raw: string | null;
-    };
+    const row = db.driver.get<{ raw: string | null }>(
+      'SELECT raw FROM incidents WHERE id = ?',
+      result.incident.id,
+    )!;
     expect(row.raw).toBeNull();
   });
 });

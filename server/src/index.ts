@@ -1,9 +1,9 @@
+import { IncidentRepository } from '@crimetracker/shared';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import websocket from '@fastify/websocket';
 import { loadConfig } from './config.js';
 import { openDatabase, resolveDatabasePath } from './db/database.js';
-import { IncidentRepository } from './db/repository.js';
 import { createExtractor } from './extraction/index.js';
 import { registerRoutes } from './http/routes.js';
 import { registerWebsocket } from './http/ws.js';
@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   });
 
   const db = openDatabase(config.databasePath);
-  const repository = new IncidentRepository(db);
+  const repository = new IncidentRepository(db.driver);
   app.log.info(`database: ${resolveDatabasePath(config.databasePath)}`);
 
   if (config.retentionHours > 0) {

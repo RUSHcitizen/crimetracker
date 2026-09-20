@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeIncident, WASHINGTON_BBOX, containsPoint, INCIDENT_TYPES } from '@crimetracker/shared';
-import { SimulationGenerator } from '../src/sim/generator.js';
-import { SIM_PLACES } from '../src/sim/places.js';
+import {
+  containsPoint,
+  INCIDENT_TYPES,
+  normalizeIncident,
+  SIM_PLACES,
+  SimulationGenerator,
+  WASHINGTON_BBOX,
+} from '@crimetracker/shared';
 import { SIMULATION_DESCRIPTOR } from '../src/sources/simulation.js';
 
 describe('SimulationGenerator', () => {

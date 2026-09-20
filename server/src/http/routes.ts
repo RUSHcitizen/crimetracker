@@ -1,12 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import {
+  IncidentRepository,
   incidentQuerySchema,
   INCIDENT_TYPE_META,
   modeSchema,
   type IncidentQuery,
 } from '@crimetracker/shared';
 import { publicConfig, type Config } from '../config.js';
-import type { IncidentRepository } from '../db/repository.js';
 import type { IngestionPipeline } from '../pipeline/ingest.js';
 
 export interface RouteDeps {

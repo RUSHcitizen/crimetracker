@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx watch --conditions=development --env-file-if-exists=../.env src/index.ts",
     "start": "node --env-file-if-exists=../.env dist/index.js",
-    "build": "tsc -b && node scripts/copy-assets.mjs"
+    "build": "tsc -b"
   },
   "dependencies": {
     "@crimetracker/shared": "*",

@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { assertAudioAcknowledged, assertPublicUrl, SourcePolicyError } from '../src/sources/policy.js';
-import { dotPath, extractRecords, mapRecord, PublicSafetyFeedSource } from '../src/sources/publicFeed.js';
+import { PublicSafetyFeedSource } from '../src/sources/publicFeed.js';
 import { PublicAudioSource } from '../src/sources/audio.js';
 import { RollingAudioBuffer } from '../src/audio/buffer.js';
 import { NullSpeechToText } from '../src/audio/stt.js';
 import { HeuristicExtractor } from '../src/extraction/heuristic.js';
-import type { FeedFieldMap } from '../src/config.js';
-import type { RawIncident } from '@crimetracker/shared';
+import {
+  dotPath,
+  extractRecords,
+  mapRecord,
+  type FeedFieldMap,
+  type RawIncident,
+} from '@crimetracker/shared';
 import type { SourceContext } from '../src/sources/types.js';
 
 const MAP: FeedFieldMap = {

@@ -1,5 +1,4 @@
-import type { SourceDescriptor } from '@crimetracker/shared';
-import { SimulationGenerator } from '../sim/generator.js';
+import { SimulationGenerator, type SourceDescriptor } from '@crimetracker/shared';
 import { SourceStatusTracker, type DataSource, type SourceContext } from './types.js';
 
 export interface SimulationSourceOptions {

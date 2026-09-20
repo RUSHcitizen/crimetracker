@@ -1,4 +1,4 @@
-import { WASHINGTON_BBOX, type BBox } from '@crimetracker/shared';
+import { WASHINGTON_BBOX, type BBox, type FeedFieldMap } from '@crimetracker/shared';
 
 /**
  * All configuration comes from the environment. Nothing here is ever sent to the browser
@@ -43,15 +43,7 @@ function readers(env: NodeJS.ProcessEnv) {
   return { str, num, bool, list };
 }
 
-export interface FeedFieldMap {
-  readonly id: string;
-  readonly timestamp: string;
-  readonly type: string;
-  readonly description: string;
-  readonly location: string;
-  readonly lat: string;
-  readonly lon: string;
-}
+export type { FeedFieldMap };
 
 export interface Config {
   readonly port: number;

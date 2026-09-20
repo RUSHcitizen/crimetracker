@@ -10,3 +10,5 @@ data/*.db-*
 coverage/
 .DS_Store
 *.log
+.wrangler/
+.dev.vars

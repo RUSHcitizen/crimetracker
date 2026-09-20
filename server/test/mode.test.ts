@@ -1,9 +1,9 @@
+import { IncidentRepository } from '@crimetracker/shared';
 import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 import type { AppMode, SourceDescriptor, SourceStatus } from '@crimetracker/shared';
 import { loadConfig } from '../src/config.js';
 import { openDatabase } from '../src/db/database.js';
-import { IncidentRepository } from '../src/db/repository.js';
 import { registerRoutes } from '../src/http/routes.js';
 import { RealtimeHub } from '../src/pipeline/hub.js';
 import { IngestionPipeline } from '../src/pipeline/ingest.js';
@@ -69,7 +69,7 @@ const feedDescriptor: SourceDescriptor = {
 
 function harness(withFeed: boolean, mode: AppMode = 'simulation') {
   const db = openDatabase(':memory:');
-  const repository = new IncidentRepository(db);
+  const repository = new IncidentRepository(db.driver);
   const hub = new RealtimeHub(5);
   const pipeline = new IngestionPipeline({
     config: { ...loadConfig(), databasePath: ':memory:', mode },

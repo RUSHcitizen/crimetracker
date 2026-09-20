@@ -1,0 +1,19 @@
+{
+  "name": "@crimetracker/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build:web": "npm run build --workspace web",
+    "deploy": "npm run build:web && wrangler deploy",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@crimetracker/shared": "*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250204.0",
+    "wrangler": "^4.0.0"
+  }
+}

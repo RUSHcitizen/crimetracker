@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { randomUUID, type SnapshotFrame } from '@crimetracker/shared';
-import type { IncidentRepository } from '../db/repository.js';
+import {
+  IncidentRepository, randomUUID, type SnapshotFrame } from '@crimetracker/shared';
 import type { IngestionPipeline } from '../pipeline/ingest.js';
 import type { RealtimeHub } from '../pipeline/hub.js';
 

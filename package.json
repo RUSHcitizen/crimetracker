@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Crime Tracker — a futuristic public-safety incident visualization system.",
+  "description": "Crime Tracker \u2014 a futuristic public-safety incident visualization system.",
   "workspaces": [
     "shared",
     "server",
-    "web"
+    "web",
+    "worker"
   ],
   "engines": {
     "node": ">=22.5.0"
@@ -20,8 +21,10 @@
     "start": "npm run start --workspace server",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b shared server web",
-    "prepare:geo": "node scripts/prepare-geo.mjs"
+    "typecheck": "tsc -b shared server web && npm run typecheck --workspace worker",
+    "prepare:geo": "node scripts/prepare-geo.mjs",
+    "dev:worker": "npm run dev --workspace worker",
+    "deploy": "npm run deploy --workspace worker"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

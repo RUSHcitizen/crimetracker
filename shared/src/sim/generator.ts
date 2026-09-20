@@ -1,11 +1,7 @@
-import {
-  createRng,
-  offsetCoordinates,
-  type IncidentType,
-  type RawIncident,
-  type Rng,
-  type SeverityLevel,
-} from '@crimetracker/shared';
+import { createRng, type Rng } from '../rng.js';
+import { offsetCoordinates } from '../geo.js';
+import type { IncidentType, SeverityLevel } from '../taxonomy.js';
+import type { RawIncident } from '../types.js';
 import { SIM_PLACES, streetsFor, type SimPlace } from './places.js';
 
 /**

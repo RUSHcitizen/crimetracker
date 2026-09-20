@@ -1,14 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
-import type { RawIncident, SourceDescriptor, SourceStatus } from '@crimetracker/shared';
+import {
+  IncidentRepository, SimulationGenerator, type RawIncident, type SourceDescriptor, type SourceStatus } from '@crimetracker/shared';
 import { loadConfig } from '../src/config.js';
 import { openDatabase } from '../src/db/database.js';
-import { IncidentRepository } from '../src/db/repository.js';
 import { registerRoutes } from '../src/http/routes.js';
 import { RealtimeHub } from '../src/pipeline/hub.js';
 import { IngestionPipeline } from '../src/pipeline/ingest.js';
-import { SimulationGenerator } from '../src/sim/generator.js';
 import type { DataSource } from '../src/sources/types.js';
 
 const DESCRIPTOR: SourceDescriptor = {
@@ -48,7 +47,7 @@ const source = new InertSource();
 beforeAll(async () => {
   const config = { ...loadConfig(), databasePath: ':memory:', mode: 'simulation' as const };
   const db = openDatabase(':memory:');
-  repository = new IncidentRepository(db);
+  repository = new IncidentRepository(db.driver);
   repository.upsertSource(DESCRIPTOR);
 
   const hub = new RealtimeHub(5);

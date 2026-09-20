@@ -1,9 +1,9 @@
+import { IncidentRepository } from '@crimetracker/shared';
 import { describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
 import websocket from '@fastify/websocket';
 import { WebSocket } from 'ws';
 import { openDatabase } from '../src/db/database.js';
-import { IncidentRepository } from '../src/db/repository.js';
 import { registerWebsocket } from '../src/http/ws.js';
 import { RealtimeHub } from '../src/pipeline/hub.js';
 import { IngestionPipeline } from '../src/pipeline/ingest.js';
@@ -19,7 +19,7 @@ const ALLOWED = 'http://localhost:5173';
  */
 async function server() {
   const db = openDatabase(':memory:');
-  const repository = new IncidentRepository(db);
+  const repository = new IncidentRepository(db.driver);
   repository.upsertSource(SIMULATION_DESCRIPTOR);
   const hub = new RealtimeHub(10);
   const pipeline = new IngestionPipeline({

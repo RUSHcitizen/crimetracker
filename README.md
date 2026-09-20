@@ -232,6 +232,63 @@ behind one reverse proxy so `/api` and `/ws` are same-origin.
 Set `DATABASE_PATH` to a persistent volume and `RETENTION_HOURS` to bound growth
 (incidents older than the retention window are pruned at startup).
 
+## 7b. Deploying to Cloudflare
+
+The project also runs on Cloudflare Workers, with no Node server at all:
+
+```bash
+npx wrangler login        # once, or set CLOUDFLARE_API_TOKEN
+npm run deploy            # builds the client, then `wrangler deploy`
+```
+
+That publishes one Worker that serves everything from a single origin:
+
+```
+  request ──► Worker (worker/src/index.ts)
+                ├── /api/*, /ws  ──► Durable Object "TrackerRoom"
+                │                      ├── SQLite     (incident store)
+                │                      ├── alarms     (simulation + feed polling)
+                │                      └── WebSockets (hibernated fan-out)
+                └── everything else ──► static assets (web/dist)
+```
+
+Why it is shaped this way:
+
+* **One Durable Object owns the tracker.** A Worker is stateless and short-lived, so the
+  incident store, the clock and the connected sockets all live in a single object. That
+  restores the ordering and consistency guarantees the single-process Node server had.
+* **The store is the same code.** `IncidentRepository` talks to a `SqlDriver`, so the
+  identical queries run against `node:sqlite` on a server and the Durable Object's
+  embedded SQLite on Cloudflare. Normalization, pattern detection and the simulation
+  engine are runtime-neutral and shared verbatim.
+* **Alarms replace `setInterval`.** A Durable Object alarm survives eviction, so the
+  simulation and feed polling keep running when nobody is connected. A five-minute cron
+  nudges the room awake as a backstop.
+* **WebSocket hibernation** means idle clients cost nothing and the object can be evicted
+  without dropping them.
+* **Same origin** for the page, the API and the socket: no CORS, no API host in the
+  client bundle, and cross-origin WebSocket upgrades are refused.
+
+Run it locally against the real Workers runtime — no Cloudflare account needed:
+
+```bash
+npm run build --workspace web
+npm run dev:worker        # http://127.0.0.1:8788
+```
+
+Configuration lives in `worker/wrangler.jsonc` under `vars` (mode, simulation rate,
+pattern thresholds, `FEED_URL` and its field mapping). Secrets never go there:
+
+```bash
+npx wrangler secret put AI_API_KEY
+```
+
+Locally, put secrets in `worker/.dev.vars` (gitignored; see `.dev.vars.example`).
+
+The optional public-audio pipeline is **not** part of the Cloudflare build: it needs a
+long-lived streaming connection, which a Worker request does not provide. Structured
+feeds — the preferred source anyway — work identically on both runtimes.
+
 ## 8. Architecture
 
 Full detail in [`ARCHITECTURE.md`](./ARCHITECTURE.md). In short:
@@ -288,12 +345,14 @@ thousands of incidents cost a handful of layers rather than thousands of DOM nod
 npm test
 ```
 
-185 tests covering incident normalization, coordinate validation and rejection, timestamp
+210 tests covering incident normalization, coordinate validation and rejection, timestamp
 parsing, provenance rules, the simulation generator, the heuristic and OpenAI-compatible
 extractors, source policy and feed mapping, the audio buffer, pattern detection
 (including an equivalence check against a brute-force reference implementation and a
-performance bound), the repository and statistics, the realtime hub's batching, a live
-WebSocket round-trip, and the REST API including its input-validation behaviour.
+performance bound), the repository and statistics, mode switching (that a stopped source really produces
+nothing), WebSocket origin enforcement, the realtime hub's batching, a live WebSocket
+round-trip, the REST API including its input-validation behaviour, and the Worker's
+configuration loader.
 
 ## 10. Security notes
 

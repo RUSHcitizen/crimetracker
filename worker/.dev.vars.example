@@ -1,0 +1,16 @@
+# Local-only overrides for `wrangler dev`. Copy to `worker/.dev.vars` (gitignored).
+# Non-secret settings belong in wrangler.jsonc "vars"; secrets go here locally and in
+# `wrangler secret put` for a real deployment. Nothing here reaches the browser.
+
+# FEED_URL=https://data.example.gov/resource/incidents.json
+# FEED_MAP_TIMESTAMP=reported_datetime
+# FEED_MAP_TYPE=call_type
+# FEED_MAP_DESCRIPTION=description
+# FEED_MAP_LOCATION=block_address
+# FEED_MAP_LAT=latitude
+# FEED_MAP_LON=longitude
+
+# AI_PROVIDER=openai-compatible
+# AI_BASE_URL=https://api.openai.com/v1
+# AI_MODEL=gpt-4o-mini
+# AI_API_KEY=sk-...

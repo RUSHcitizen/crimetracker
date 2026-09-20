@@ -1,4 +1,5 @@
 import {
+  IncidentRepository,
   detectPatterns,
   normalizeIncident,
   type AppMode,
@@ -11,7 +12,6 @@ import {
   type Stats,
 } from '@crimetracker/shared';
 import type { Config } from '../config.js';
-import type { IncidentRepository } from '../db/repository.js';
 import { modeOfSource } from '../sources/registry.js';
 import type { DataSource, SourceContext } from '../sources/types.js';
 import type { RealtimeHub } from './hub.js';

@@ -1,19 +1,18 @@
-import {
-  haversineKm,
-  INCIDENT_TYPE_META,
-  SEVERITY_LABEL,
-  type Incident,
-  type IncidentQuery,
-  type PatternCluster,
-  type ProvenanceField,
-  type ProvenanceMap,
-  type SourceDescriptor,
-  type Stats,
-  type StatsBucket,
-  type TimeBucket,
-  type ExtractionResult,
-} from '@crimetracker/shared';
-import type { Database } from './database.js';
+import { haversineKm } from './geo.js';
+import { INCIDENT_TYPE_META, SEVERITY_LABEL } from './taxonomy.js';
+import type { SqlDriver } from './storage.js';
+import type {
+  ExtractionResult,
+  Incident,
+  IncidentQuery,
+  PatternCluster,
+  ProvenanceField,
+  ProvenanceMap,
+  SourceDescriptor,
+  Stats,
+  StatsBucket,
+  TimeBucket,
+} from './types.js';
 
 interface IncidentRow {
   id: string;
@@ -41,14 +40,22 @@ interface IncidentRow {
 }
 
 /**
- * The only module that speaks SQL. Everything above it works with `Incident` objects, so
- * replacing SQLite with Postgres means reimplementing this file and nothing else.
+ * The only module that speaks SQL.
+ *
+ * It talks to a `SqlDriver` rather than any particular database client, so the same
+ * queries run against `node:sqlite` on a server and a Durable Object's embedded SQLite on
+ * Cloudflare. Everything above works with `Incident` objects, so moving to
+ * Postgres/PostGIS means reimplementing this file and nothing else.
  */
 export class IncidentRepository {
-  readonly #db: Database;
+  readonly #db: SqlDriver;
   readonly #sourceCache = new Map<string, SourceDescriptor>();
 
-  constructor(db: Database) {
+  /**
+   * Takes a `SqlDriver` rather than a concrete database handle, so the same queries run
+   * against `node:sqlite` on a server and against a Durable Object's SQLite on Workers.
+   */
+  constructor(db: SqlDriver) {
     this.#db = db;
   }
 
@@ -56,26 +63,21 @@ export class IncidentRepository {
 
   upsertSource(descriptor: SourceDescriptor): void {
     const now = new Date().toISOString();
-    this.#db
-      .prepare(
-        `INSERT INTO sources (id, name, kind, note, url, first_seen_at, last_seen_at)
+    this.#db.run(`INSERT INTO sources (id, name, kind, note, url, first_seen_at, last_seen_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            kind = excluded.kind,
            note = excluded.note,
            url = excluded.url,
-           last_seen_at = excluded.last_seen_at`,
-      )
-      .run(
-        descriptor.id,
+           last_seen_at = excluded.last_seen_at`, descriptor.id,
         descriptor.name,
         descriptor.kind,
         descriptor.note,
         descriptor.url ?? null,
         now,
         now,
-      );
+    );
     this.#sourceCache.set(descriptor.id, descriptor);
   }
 
@@ -96,9 +98,7 @@ export class IncidentRepository {
       .join(' \u0001 ')
       .toLowerCase();
 
-    this.#db
-      .prepare(
-        `INSERT INTO incidents (
+    this.#db.run(`INSERT INTO incidents (
            id, timestamp, timestamp_ms, ingested_at, source_id, source_kind, incident_type,
            severity, description, location_label, location_area, approximate, precision,
            lat, lon, confidence, transcript, status, tags, raw, search_blob
@@ -117,10 +117,7 @@ export class IncidentRepository {
            transcript    = excluded.transcript,
            status        = excluded.status,
            tags          = excluded.tags,
-           search_blob   = excluded.search_blob`,
-      )
-      .run(
-        incident.id,
+           search_blob   = excluded.search_blob`, incident.id,
         incident.timestamp,
         Date.parse(incident.timestamp),
         incident.ingestedAt,
@@ -141,40 +138,31 @@ export class IncidentRepository {
         JSON.stringify(incident.tags),
         incident.raw === undefined ? null : safeJson(incident.raw),
         searchBlob,
-      );
+    );
 
-    const stmt = this.#db.prepare(
-      `INSERT INTO incident_provenance (incident_id, field, origin, confidence, note)
+    const stmtSql = `INSERT INTO incident_provenance (incident_id, field, origin, confidence, note)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(incident_id, field) DO UPDATE SET
-         origin = excluded.origin, confidence = excluded.confidence, note = excluded.note`,
-    );
+         origin = excluded.origin, confidence = excluded.confidence, note = excluded.note`;
     for (const [field, entry] of Object.entries(incident.provenance)) {
       if (!entry) continue;
-      stmt.run(incident.id, field, entry.origin, entry.confidence ?? null, entry.note ?? null);
+      this.#db.run(stmtSql, incident.id, field, entry.origin, entry.confidence ?? null, entry.note ?? null);
     }
   }
 
   insertExtraction(incidentId: string, result: ExtractionResult): void {
-    this.#db
-      .prepare(
-        `INSERT INTO extractions (incident_id, extractor_id, created_at, confidence, result, notes)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        incidentId,
+    this.#db.run(`INSERT INTO extractions (incident_id, extractor_id, created_at, confidence, result, notes)
+         VALUES (?, ?, ?, ?, ?, ?)`, incidentId,
         result.extractorId,
         new Date().toISOString(),
         result.confidence,
         JSON.stringify(result),
         JSON.stringify(result.notes),
-      );
+    );
   }
 
   getIncident(id: string): Incident | null {
-    const row = this.#db
-      .prepare(`${SELECT_INCIDENT} WHERE i.id = ?`)
-      .get(id) as IncidentRow | undefined;
+    const row = this.#db.get(`${SELECT_INCIDENT} WHERE i.id = ?`, id) as IncidentRow | undefined;
     if (!row) return null;
     return this.#hydrate(row, this.#provenanceFor([row.id]));
   }
@@ -235,7 +223,7 @@ export class IncidentRepository {
     // Over-fetch when a radius filter will drop rows after the SQL pass.
     params.push(query.near ? limit * 3 : limit, offset);
 
-    let rows = this.#db.prepare(sql).all(...params) as unknown as IncidentRow[];
+    let rows = this.#db.all(sql, ...params) as unknown as IncidentRow[];
     if (query.near) {
       const near = query.near;
       rows = rows
@@ -253,12 +241,12 @@ export class IncidentRepository {
   }
 
   countIncidents(): number {
-    const row = this.#db.prepare('SELECT COUNT(*) AS n FROM incidents').get() as { n: number };
+    const row = this.#db.get('SELECT COUNT(*) AS n FROM incidents') as { n: number };
     return row.n;
   }
 
   deleteOlderThan(cutoffMs: number): number {
-    const result = this.#db.prepare('DELETE FROM incidents WHERE timestamp_ms < ?').run(cutoffMs);
+    const result = this.#db.run('DELETE FROM incidents WHERE timestamp_ms < ?', cutoffMs);
     return Number(result.changes ?? 0);
   }
 
@@ -266,14 +254,13 @@ export class IncidentRepository {
 
   recordClusters(clusters: readonly PatternCluster[]): void {
     if (clusters.length === 0) return;
-    const stmt = this.#db.prepare(
-      `INSERT INTO clusters (id, detected_at, center_lat, center_lon, radius_km, count,
+    const stmtSql = `INSERT INTO clusters (id, detected_at, center_lat, center_lon, radius_km, count,
                              dominant_type, confidence, span_minutes, payload)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id, detected_at) DO NOTHING`,
-    );
+       ON CONFLICT(id, detected_at) DO NOTHING`;
     for (const cluster of clusters) {
-      stmt.run(
+      this.#db.run(
+        stmtSql,
         cluster.id,
         cluster.detectedAt,
         cluster.center.lat,
@@ -296,7 +283,7 @@ export class IncidentRepository {
     startOfDay.setHours(0, 0, 0, 0);
 
     const scalar = (sql: string, ...params: (string | number)[]): number => {
-      const row = this.#db.prepare(sql).get(...params) as { n: number } | undefined;
+      const row = this.#db.get(sql, ...params) as { n: number } | undefined;
       return row?.n ?? 0;
     };
 
@@ -314,7 +301,7 @@ export class IncidentRepository {
      * hours of empty buckets. The span is reported alongside so the axis can be
      * labelled truthfully.
      */
-    const oldestRow = this.#db.prepare('SELECT MIN(timestamp_ms) AS n FROM incidents').get() as
+    const oldestRow = this.#db.get('SELECT MIN(timestamp_ms) AS n FROM incidents') as
       | { n: number | null }
       | undefined;
     const oldest = oldestRow?.n ?? null;
@@ -322,12 +309,8 @@ export class IncidentRepository {
       oldest != null && oldest > windowStart ? Math.min(oldest, now - 30 * 60_000) : windowStart;
 
     const byType = (
-      this.#db
-        .prepare(
-          `SELECT incident_type AS key, COUNT(*) AS count FROM incidents
-           WHERE timestamp_ms >= ? GROUP BY incident_type ORDER BY count DESC`,
-        )
-        .all(windowStart) as unknown as { key: string; count: number }[]
+      this.#db.all(`SELECT incident_type AS key, COUNT(*) AS count FROM incidents
+           WHERE timestamp_ms >= ? GROUP BY incident_type ORDER BY count DESC`, windowStart) as unknown as { key: string; count: number }[]
     ).map<StatsBucket>((r) => ({
       key: r.key,
       label: INCIDENT_TYPE_META[r.key as keyof typeof INCIDENT_TYPE_META]?.label ?? r.key,
@@ -335,21 +318,13 @@ export class IncidentRepository {
     }));
 
     const byArea = (
-      this.#db
-        .prepare(
-          `SELECT COALESCE(location_area, 'Unspecified') AS key, COUNT(*) AS count FROM incidents
-           WHERE timestamp_ms >= ? GROUP BY key ORDER BY count DESC LIMIT 12`,
-        )
-        .all(windowStart) as unknown as { key: string; count: number }[]
+      this.#db.all(`SELECT COALESCE(location_area, 'Unspecified') AS key, COUNT(*) AS count FROM incidents
+           WHERE timestamp_ms >= ? GROUP BY key ORDER BY count DESC LIMIT 12`, windowStart) as unknown as { key: string; count: number }[]
     ).map<StatsBucket>((r) => ({ key: r.key, label: r.key, count: r.count }));
 
     const bySeverity = (
-      this.#db
-        .prepare(
-          `SELECT severity AS key, COUNT(*) AS count FROM incidents
-           WHERE timestamp_ms >= ? GROUP BY severity ORDER BY key DESC`,
-        )
-        .all(windowStart) as unknown as { key: number; count: number }[]
+      this.#db.all(`SELECT severity AS key, COUNT(*) AS count FROM incidents
+           WHERE timestamp_ms >= ? GROUP BY severity ORDER BY key DESC`, windowStart) as unknown as { key: number; count: number }[]
     ).map<StatsBucket>((r) => ({
       key: String(r.key),
       label: SEVERITY_LABEL[r.key as 1 | 2 | 3 | 4 | 5] ?? String(r.key),
@@ -357,23 +332,15 @@ export class IncidentRepository {
     }));
 
     const bySource = (
-      this.#db
-        .prepare(
-          `SELECT i.source_id AS key, s.name AS label, COUNT(*) AS count
+      this.#db.all(`SELECT i.source_id AS key, s.name AS label, COUNT(*) AS count
            FROM incidents i JOIN sources s ON s.id = i.source_id
-           WHERE i.timestamp_ms >= ? GROUP BY i.source_id ORDER BY count DESC`,
-        )
-        .all(windowStart) as unknown as { key: string; label: string; count: number }[]
+           WHERE i.timestamp_ms >= ? GROUP BY i.source_id ORDER BY count DESC`, windowStart) as unknown as { key: string; label: string; count: number }[]
     ).map<StatsBucket>((r) => ({ key: r.key, label: r.label, count: r.count }));
 
     const bucketMs = (now - timelineStart) / buckets;
-    const timelineRows = this.#db
-      .prepare(
-        `SELECT CAST((timestamp_ms - ?) / ? AS INTEGER) AS bucket,
+    const timelineRows = this.#db.all(`SELECT CAST((timestamp_ms - ?) / ? AS INTEGER) AS bucket,
                 COUNT(*) AS count, SUM(severity) AS severity_sum
-         FROM incidents WHERE timestamp_ms >= ? GROUP BY bucket`,
-      )
-      .all(timelineStart, bucketMs, timelineStart) as unknown as {
+         FROM incidents WHERE timestamp_ms >= ? GROUP BY bucket`, timelineStart, bucketMs, timelineStart) as unknown as {
       bucket: number;
       count: number;
       severity_sum: number;
@@ -390,9 +357,7 @@ export class IncidentRepository {
     }
 
     const confidences = (
-      this.#db
-        .prepare('SELECT confidence FROM incidents WHERE timestamp_ms >= ? ORDER BY confidence')
-        .all(windowStart) as unknown as { confidence: number }[]
+      this.#db.all('SELECT confidence FROM incidents WHERE timestamp_ms >= ? ORDER BY confidence', windowStart) as unknown as { confidence: number }[]
     ).map((r) => r.confidence);
     const medianConfidence =
       confidences.length === 0
@@ -424,15 +389,14 @@ export class IncidentRepository {
   #provenanceFor(ids: readonly string[]): Map<string, ProvenanceMap> {
     const out = new Map<string, ProvenanceMap>();
     if (ids.length === 0) return out;
-    // Chunked so we never exceed SQLite's variable limit on a large page.
-    for (let i = 0; i < ids.length; i += 400) {
-      const chunk = ids.slice(i, i + 400);
-      const rows = this.#db
-        .prepare(
-          `SELECT incident_id, field, origin, confidence, note FROM incident_provenance
-           WHERE incident_id IN (${chunk.map(() => '?').join(',')})`,
-        )
-        .all(...chunk) as unknown as {
+    // Chunked to stay under the tightest bound-parameter limit of any runtime we target.
+    // Cloudflare's embedded SQLite caps a statement at ~100 variables — far lower than
+    // node:sqlite's ~32k — and exceeding it fails the whole query with
+    // "too many SQL variables".
+    for (let i = 0; i < ids.length; i += PROVENANCE_CHUNK) {
+      const chunk = ids.slice(i, i + PROVENANCE_CHUNK);
+      const rows = this.#db.all(`SELECT incident_id, field, origin, confidence, note FROM incident_provenance
+           WHERE incident_id IN (${chunk.map(() => '?').join(',')})`, ...chunk) as unknown as {
         incident_id: string;
         field: string;
         origin: string;
@@ -481,6 +445,9 @@ export class IncidentRepository {
     };
   }
 }
+
+/** Bound parameters per provenance lookup. See `#provenanceFor`. */
+const PROVENANCE_CHUNK = 90;
 
 const SELECT_INCIDENT = `
   SELECT i.*, s.name AS source_name, s.url AS source_url

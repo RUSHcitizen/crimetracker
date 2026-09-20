@@ -1,0 +1,544 @@
+import { DurableObject } from 'cloudflare:workers';
+import {
+  createRng,
+  detectPatterns,
+  IncidentRepository,
+  extractRecords,
+  incidentQuerySchema,
+  INCIDENT_TYPE_META,
+  mapRecord,
+  modeSchema,
+  normalizeIncident,
+  SimulationGenerator,
+  type AppMode,
+  type Incident,
+  type IncidentQuery,
+  type PatternCluster,
+  type RawIncident,
+  type ServerFrame,
+  type SnapshotFrame,
+  type SourceDescriptor,
+  type SourceStatus,
+  type Stats,
+} from '@crimetracker/shared';
+import { loadWorkerConfig, publicWorkerConfig, type Env, type WorkerConfig } from './config.js';
+import { migrate } from './driver.js';
+
+const SIMULATION_DESCRIPTOR: SourceDescriptor = {
+  id: 'simulation',
+  name: 'Simulation Engine',
+  kind: 'simulation',
+  note: 'Fictional incidents generated locally. Not real events, not derived from any feed.',
+  url: null,
+};
+
+/** How often the alarm fires. Simulation and feed polling are both driven from it. */
+const TICK_MS = 2_000;
+const SNAPSHOT_SIZE = 2500;
+
+interface SourceRuntime {
+  readonly descriptor: SourceDescriptor;
+  state: SourceStatus['state'];
+  ingested: number;
+  rejected: number;
+  lastEventAt: string | null;
+  message: string | null;
+  /** Epoch ms of the next due poll, for the feed source. */
+  nextPollAt: number;
+}
+
+/**
+ * The tracker, as a single Durable Object.
+ *
+ * On Cloudflare there is no long-lived process, so the pieces the Node server gets for
+ * free are provided differently:
+ *
+ *   - **state** lives in the object's embedded SQLite, through the same `IncidentRepository`
+ *     the Node server uses (both speak the `SqlDriver` seam);
+ *   - **the clock** is a Durable Object alarm rather than `setInterval`, so the simulation
+ *     and feed polling survive the object being evicted between requests;
+ *   - **realtime** uses WebSocket hibernation, so connected clients cost nothing while
+ *     idle and the object can be evicted without dropping them.
+ *
+ * One object instance owns all of this, which keeps ordering and the incident store
+ * consistent — exactly the guarantee the Node single-process server had.
+ */
+export class TrackerRoom extends DurableObject<Env> {
+  readonly #repo: IncidentRepository;
+  readonly #config: WorkerConfig;
+  #generator: SimulationGenerator;
+  #patterns: PatternCluster[] = [];
+  #sources = new Map<string, SourceRuntime>();
+  #mode: AppMode;
+  #accepted = 0;
+  #rejected = 0;
+  #nextSimAt = 0;
+  #booted = false;
+  #seenFeedIds = new Set<string>();
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    this.#config = loadWorkerConfig(env);
+    this.#mode = this.#config.mode;
+    this.#repo = new IncidentRepository(migrate(ctx.storage.sql));
+    this.#generator = new SimulationGenerator(
+      this.#config.simulation.seed ? { seed: this.#config.simulation.seed } : {},
+    );
+
+    this.#registerSource(SIMULATION_DESCRIPTOR);
+    if (this.#config.feed.enabled) {
+      this.#registerSource({
+        id: 'public-feed',
+        name: this.#config.feed.name,
+        kind: 'public-feed',
+        note: `Structured public-safety records polled from ${safeHost(this.#config.feed.url)}.`,
+        url: this.#config.feed.url,
+      });
+    }
+
+    // Restore counters and mode across evictions.
+    void ctx.blockConcurrencyWhile(async () => {
+      const saved = await ctx.storage.get<{ mode: AppMode; accepted: number; rejected: number }>('meta');
+      if (saved) {
+        this.#mode = saved.mode;
+        this.#accepted = saved.accepted;
+        this.#rejected = saved.rejected;
+      }
+      this.#booted = (await ctx.storage.get<boolean>('booted')) ?? false;
+    });
+  }
+
+  /* ------------------------------- HTTP surface ------------------------------ */
+
+  override async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (url.pathname === '/ws') return this.#handleUpgrade(request);
+
+    await this.#ensureStarted();
+
+    switch (`${request.method} ${url.pathname}`) {
+      case 'GET /api/health':
+        return json({
+          status: 'ok',
+          mode: this.#mode,
+          serverTime: new Date().toISOString(),
+          incidents: this.#repo.countIncidents(),
+          counters: { accepted: this.#accepted, rejected: this.#rejected },
+          runtime: 'cloudflare-worker',
+        });
+
+      case 'GET /api/config':
+        return json(publicWorkerConfig({ ...this.#config, mode: this.#mode }));
+
+      case 'GET /api/taxonomy':
+        return json({ types: Object.values(INCIDENT_TYPE_META) });
+
+      case 'GET /api/incidents':
+        return this.#handleIncidents(url);
+
+      case 'GET /api/search':
+        return this.#handleSearch(url);
+
+      case 'GET /api/stats':
+        return json({ stats: this.#currentStats() });
+
+      case 'GET /api/patterns':
+        return json({
+          patterns: this.#patterns,
+          disclaimer:
+            'Analytical inference over incidents already received. Not a prediction of future events.',
+        });
+
+      case 'GET /api/sources':
+        return json({ sources: this.#sourceStatuses(), mode: this.#mode });
+
+      case 'POST /api/mode':
+        return this.#handleMode(request);
+    }
+
+    if (request.method === 'GET' && url.pathname.startsWith('/api/incidents/')) {
+      const id = decodeURIComponent(url.pathname.slice('/api/incidents/'.length));
+      if (!id || id.length > 120) return json({ error: 'invalid-id' }, 400);
+      const incident = this.#repo.getIncident(id);
+      return incident ? json({ incident }) : json({ error: 'not-found' }, 404);
+    }
+
+    return json({ error: 'not-found' }, 404);
+  }
+
+  #handleIncidents(url: URL): Response {
+    const parsed = incidentQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+    if (!parsed.success) return json({ error: 'invalid-query', issues: parsed.error.issues }, 400);
+    const query = toQuery(parsed.data, 500);
+    const incidents = this.#repo.queryIncidents(query);
+    return json({ incidents, count: incidents.length, query });
+  }
+
+  #handleSearch(url: URL): Response {
+    const parsed = incidentQuerySchema.safeParse(Object.fromEntries(url.searchParams));
+    if (!parsed.success) return json({ error: 'invalid-query', issues: parsed.error.issues }, 400);
+    const query = toQuery(parsed.data, 60);
+    const incidents = this.#repo.queryIncidents({ ...query, limit: Math.min(query.limit ?? 60, 200) });
+    return json({ incidents, count: incidents.length });
+  }
+
+  async #handleMode(request: Request): Promise<Response> {
+    const body = await request.json().catch(() => null);
+    const parsed = modeSchema.safeParse(body);
+    if (!parsed.success) return json({ error: 'invalid-mode' }, 400);
+
+    const target = parsed.data.mode;
+    if (target === this.#mode) return json({ mode: this.#mode });
+
+    // Same rule as the Node server: a mode nothing can serve is refused, never displayed.
+    const canServe =
+      target === 'simulation'
+        ? this.#sources.has('simulation')
+        : [...this.#sources.values()].some((s) => s.descriptor.kind !== 'simulation');
+
+    if (!canServe) {
+      return json(
+        {
+          error: 'mode-unavailable',
+          reason:
+            target === 'live'
+              ? 'No live source is configured. Set FEED_URL to connect a publicly accessible feed.'
+              : 'The simulation engine is not available in this deployment.',
+          mode: this.#mode,
+        },
+        409,
+      );
+    }
+
+    this.#mode = target;
+    for (const source of this.#sources.values()) {
+      const belongs = (source.descriptor.kind === 'simulation' ? 'simulation' : 'live') === target;
+      source.state = belongs ? 'online' : 'stopped';
+    }
+    await this.#persistMeta();
+    this.#broadcast({ type: 'mode', mode: this.#mode });
+    this.#broadcast({ type: 'sources', sources: this.#sourceStatuses() });
+    return json({ mode: this.#mode });
+  }
+
+  /* --------------------------------- realtime -------------------------------- */
+
+  #handleUpgrade(request: Request): Response {
+    if (request.headers.get('upgrade') !== 'websocket') {
+      return new Response('Expected a WebSocket upgrade', { status: 426 });
+    }
+    const pair = new WebSocketPair();
+    const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+
+    // Hibernation: the object may be evicted while sockets stay open.
+    this.ctx.acceptWebSocket(server);
+
+    void this.#ensureStarted().then(() => {
+      const snapshot: SnapshotFrame = {
+        type: 'snapshot',
+        mode: this.#mode,
+        serverTime: new Date().toISOString(),
+        incidents: this.#repo.queryIncidents({ limit: SNAPSHOT_SIZE }),
+        patterns: this.#patterns,
+        stats: this.#currentStats(),
+        sources: this.#sourceStatuses(),
+      };
+      try {
+        server.send(JSON.stringify(snapshot));
+      } catch {
+        // The client went away between accept and snapshot.
+      }
+    });
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /** Clients have nothing to say: every mutation goes through the REST API. */
+  override async webSocketMessage(): Promise<void> {}
+
+  override async webSocketClose(ws: WebSocket): Promise<void> {
+    try {
+      ws.close();
+    } catch {
+      // Already closed.
+    }
+  }
+
+  #broadcast(frame: ServerFrame): void {
+    const payload = JSON.stringify(frame);
+    for (const socket of this.ctx.getWebSockets()) {
+      try {
+        socket.send(payload);
+      } catch {
+        // Dropped sockets are cleaned up by the runtime.
+      }
+    }
+  }
+
+  /* ---------------------------------- clock ---------------------------------- */
+
+  /** Start the alarm loop and backfill history the first time the object is used. */
+  async #ensureStarted(): Promise<void> {
+    if (!this.#booted) {
+      this.#booted = true;
+      await this.ctx.storage.put('booted', true);
+      if (this.#config.simulation.backfill > 0) this.#backfill();
+      this.runAnalysis();
+    }
+    const existing = await this.ctx.storage.getAlarm();
+    if (existing === null) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+  }
+
+  override async alarm(): Promise<void> {
+    const now = Date.now();
+
+    if (this.#mode === 'simulation' && this.#sources.get('simulation')?.state === 'online') {
+      if (this.#nextSimAt === 0) this.#nextSimAt = now;
+      while (this.#nextSimAt <= now) {
+        this.#emitSimulated(new Date(this.#nextSimAt));
+        this.#nextSimAt += this.#generator.nextInterval(this.#config.simulation.intervalSeconds) * 1000;
+      }
+    }
+
+    if (this.#mode === 'live') {
+      const feed = this.#sources.get('public-feed');
+      if (feed && feed.state !== 'stopped' && now >= feed.nextPollAt) {
+        feed.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
+        await this.#pollFeed(feed);
+      }
+    }
+
+    this.runAnalysis();
+    await this.#persistMeta();
+    await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+  }
+
+  /* --------------------------------- ingestion ------------------------------- */
+
+  #ingest(descriptor: SourceDescriptor, raws: readonly RawIncident[]): Incident[] {
+    const runtime = this.#sources.get(descriptor.id);
+    const accepted: Incident[] = [];
+
+    for (const raw of raws) {
+      const result = normalizeIncident(raw, { source: descriptor, region: this.#config.region });
+      if (!result.ok) {
+        this.#rejected += 1;
+        if (runtime) runtime.rejected += 1;
+        continue;
+      }
+      this.#repo.insertIncident(result.incident);
+      accepted.push(result.incident);
+      this.#accepted += 1;
+    }
+
+    if (accepted.length > 0 && runtime) {
+      runtime.ingested += accepted.length;
+      runtime.lastEventAt = new Date().toISOString();
+      this.#broadcast({ type: 'incidents', incidents: accepted });
+    }
+    return accepted;
+  }
+
+  #emitSimulated(at: Date): void {
+    // Occasional bursts are what make pattern detection worth having.
+    const burst = this.#rollBurst();
+    const records = burst
+      ? this.#generator.generateBurst(at)
+      : [this.#generator.generate(at)];
+    this.#ingest(SIMULATION_DESCRIPTOR, records);
+  }
+
+  #rollBurst(): boolean {
+    return Math.random() < 0.06;
+  }
+
+  #backfill(): void {
+    const { backfill, backfillHours } = this.#config.simulation;
+    const now = Date.now();
+    const spanMs = backfillHours * 3_600_000;
+    const rng = createRng(this.#config.simulation.seed ?? 'worker-backfill');
+    const events: RawIncident[] = [];
+
+    for (let i = 0; i < backfill; i += 1) {
+      const fraction = rng.next() ** 1.25;
+      events.push(this.#generator.generate(new Date(now - fraction * spanMs)));
+    }
+    for (let i = 0; i < Math.max(2, Math.round(backfill / 600)); i += 1) {
+      events.push(...this.#generator.generateBurst(new Date(now - rng.next() * spanMs)));
+    }
+    // Bursts inside the detection window, so the interface has something to show at once.
+    for (let i = 0; i < 3; i += 1) {
+      const at = new Date(now - (4 + rng.next() * 18) * 60_000);
+      events.push(...this.#generator.generateBurst(at, 7 + Math.floor(rng.next() * 3)));
+    }
+
+    events.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
+    this.#ingest(SIMULATION_DESCRIPTOR, events);
+  }
+
+  async #pollFeed(runtime: SourceRuntime): Promise<void> {
+    try {
+      const response = await fetch(this.#config.feed.url, {
+        headers: {
+          accept: 'application/json, application/geo+json;q=0.9, */*;q=0.1',
+          'user-agent': 'CrimeTracker/0.1 (public incident visualization)',
+        },
+      });
+
+      if (response.status === 429) {
+        // Back off rather than hammering. Rate limits are never worked around.
+        runtime.state = 'degraded';
+        runtime.message = 'Rate limited by upstream — backing off';
+        runtime.nextPollAt = Date.now() + this.#config.feed.pollSeconds * 3000;
+        return;
+      }
+      if (!response.ok) {
+        runtime.state = 'error';
+        runtime.message = `HTTP ${response.status}`;
+        return;
+      }
+
+      const body: unknown = await response.json();
+      const raws: RawIncident[] = [];
+      for (const record of extractRecords(body, this.#config.feed.itemsPath)) {
+        const raw = mapRecord(record, this.#config.feed.map);
+        if (!raw) {
+          runtime.rejected += 1;
+          continue;
+        }
+        const key = raw.externalId ?? JSON.stringify([raw.timestamp, raw.description]);
+        if (this.#seenFeedIds.has(key)) continue;
+        this.#seenFeedIds.add(key);
+        raws.push(raw);
+      }
+      if (this.#seenFeedIds.size > 20_000) {
+        this.#seenFeedIds = new Set([...this.#seenFeedIds].slice(-10_000));
+      }
+
+      if (raws.length > 0) this.#ingest(runtime.descriptor, raws);
+      runtime.state = 'online';
+      runtime.message = null;
+    } catch (error) {
+      runtime.state = 'error';
+      runtime.message = error instanceof Error ? error.message.slice(0, 160) : 'unknown error';
+    }
+  }
+
+  /* --------------------------------- analysis -------------------------------- */
+
+  runAnalysis(): void {
+    const recent = this.#repo.queryIncidents({
+      sinceMinutes: this.#config.patterns.windowMinutes + 15,
+      limit: 6000,
+    });
+    this.#patterns = detectPatterns(recent, {
+      epsKm: this.#config.patterns.epsKm,
+      windowMinutes: this.#config.patterns.windowMinutes,
+      minPoints: this.#config.patterns.minPoints,
+    });
+    this.#repo.recordClusters(this.#patterns);
+
+    if (this.#config.retentionHours > 0) {
+      this.#repo.deleteOlderThan(Date.now() - this.#config.retentionHours * 3_600_000);
+    }
+
+    this.#broadcast({ type: 'patterns', patterns: this.#patterns });
+    this.#broadcast({ type: 'stats', stats: this.#currentStats() });
+    this.#broadcast({ type: 'sources', sources: this.#sourceStatuses() });
+  }
+
+  #currentStats(): Stats {
+    return this.#repo.computeStats(this.#patterns.length);
+  }
+
+  /* ---------------------------------- sources -------------------------------- */
+
+  #registerSource(descriptor: SourceDescriptor): void {
+    this.#repo.upsertSource(descriptor);
+    const belongs = (descriptor.kind === 'simulation' ? 'simulation' : 'live') === this.#config.mode;
+    this.#sources.set(descriptor.id, {
+      descriptor,
+      state: belongs ? 'online' : 'stopped',
+      ingested: 0,
+      rejected: 0,
+      lastEventAt: null,
+      message: null,
+      nextPollAt: 0,
+    });
+  }
+
+  #sourceStatuses(): SourceStatus[] {
+    return [...this.#sources.values()].map((runtime) => ({
+      id: runtime.descriptor.id,
+      name: runtime.descriptor.name,
+      kind: runtime.descriptor.kind,
+      note: runtime.descriptor.note,
+      state: runtime.state,
+      enabled: runtime.state === 'online',
+      lastEventAt: runtime.lastEventAt,
+      eventsIngested: runtime.ingested,
+      eventsRejected: runtime.rejected,
+      message: runtime.message,
+      url: runtime.descriptor.url ?? null,
+    }));
+  }
+
+  async #persistMeta(): Promise<void> {
+    await this.ctx.storage.put('meta', {
+      mode: this.#mode,
+      accepted: this.#accepted,
+      rejected: this.#rejected,
+    });
+  }
+}
+
+/* ---------------------------------- helpers --------------------------------- */
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  });
+}
+
+function toQuery(parsed: Record<string, unknown>, defaultLimit: number): IncidentQuery {
+  const q = parsed as {
+    types?: IncidentQuery['types'];
+    sources?: string[];
+    minSeverity?: number;
+    sinceMinutes?: number;
+    from?: string;
+    to?: string;
+    bbox?: [number, number, number, number];
+    lat?: number;
+    lon?: number;
+    radiusKm?: number;
+    q?: string;
+    limit?: number;
+    offset?: number;
+  };
+  return {
+    ...(q.types ? { types: q.types } : {}),
+    ...(q.sources ? { sources: q.sources } : {}),
+    ...(q.minSeverity != null ? { minSeverity: q.minSeverity } : {}),
+    ...(q.sinceMinutes != null ? { sinceMinutes: q.sinceMinutes } : {}),
+    ...(q.from ? { from: q.from } : {}),
+    ...(q.to ? { to: q.to } : {}),
+    ...(q.bbox ? { bbox: q.bbox } : {}),
+    ...(q.q ? { q: q.q } : {}),
+    ...(q.lat != null && q.lon != null && q.radiusKm != null
+      ? { near: { lat: q.lat, lon: q.lon, radiusKm: q.radiusKm } }
+      : {}),
+    limit: q.limit ?? defaultLimit,
+    offset: q.offset ?? 0,
+  };
+}
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return 'the configured feed';
+  }
+}
