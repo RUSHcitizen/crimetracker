@@ -1,0 +1,106 @@
+import type { SourceStatus } from '@crimetracker/shared';
+import type { Config } from '../config.js';
+import { NullSpeechToText, WhisperHttpSpeechToText } from '../audio/stt.js';
+import type { IncidentExtractor } from '../extraction/types.js';
+import { PublicAudioSource } from './audio.js';
+import { SourcePolicyError } from './policy.js';
+import { PublicSafetyFeedSource } from './publicFeed.js';
+import { SimulationSource } from './simulation.js';
+import type { DataSource } from './types.js';
+
+/**
+ * Builds the set of active sources from configuration.
+ *
+ * The application knows only the `DataSource` interface; this is the one place where
+ * concrete adapters are named, so adding a provider is an edit here plus a new file.
+ */
+export function buildSources(config: Config, extractor: IncidentExtractor): {
+  sources: DataSource[];
+  warnings: string[];
+} {
+  const sources: DataSource[] = [];
+  const warnings: string[] = [];
+
+  if (config.mode === 'simulation') {
+    sources.push(
+      new SimulationSource({
+        intervalSeconds: config.simulation.intervalSeconds,
+        seed: config.simulation.seed,
+        backfill: config.simulation.backfill,
+        backfillHours: config.simulation.backfillHours,
+      }),
+    );
+  }
+
+  if (config.feed.enabled) {
+    try {
+      sources.push(
+        new PublicSafetyFeedSource({
+          name: config.feed.name,
+          url: config.feed.url,
+          pollSeconds: config.feed.pollSeconds,
+          itemsPath: config.feed.itemsPath,
+          map: config.feed.map,
+        }),
+      );
+    } catch (error) {
+      warnings.push(describe('public feed', error));
+    }
+  }
+
+  if (config.audio.enabled) {
+    try {
+      const stt =
+        config.audio.stt.provider === 'whisper-http' && config.audio.stt.baseUrl
+          ? new WhisperHttpSpeechToText({
+              baseUrl: config.audio.stt.baseUrl,
+              model: config.audio.stt.model,
+              apiKey: config.audio.stt.apiKey,
+            })
+          : new NullSpeechToText();
+
+      if (stt instanceof NullSpeechToText) {
+        warnings.push(
+          'public-audio: no speech-to-text configured (STT_PROVIDER), so segments will be discarded.',
+        );
+      }
+
+      sources.push(
+        new PublicAudioSource({
+          name: 'Public Audio Stream',
+          url: config.audio.url,
+          acknowledged: config.audio.acknowledged,
+          segmentSeconds: config.audio.segmentSeconds,
+          stt,
+          extractor,
+        }),
+      );
+    } catch (error) {
+      warnings.push(describe('public audio', error));
+    }
+  } else if (config.audio.url && !config.audio.acknowledged) {
+    warnings.push(
+      'public-audio: PUBLIC_AUDIO_URL is set but PUBLIC_AUDIO_ACK is not 1 — source disabled.',
+    );
+  }
+
+  if (sources.length === 0) {
+    warnings.push(
+      config.mode === 'live'
+        ? 'LIVE mode is selected but no live source is configured. No incidents will arrive. ' +
+          'Configure FEED_URL, or switch to simulation mode.'
+        : 'No sources are configured.',
+    );
+  }
+
+  return { sources, warnings };
+}
+
+function describe(label: string, error: unknown): string {
+  if (error instanceof SourcePolicyError) return `${label}: ${error.message}`;
+  return `${label}: ${error instanceof Error ? error.message : String(error)}`;
+}
+
+export function statusesOf(sources: readonly DataSource[]): SourceStatus[] {
+  return sources.map((source) => source.status());
+}

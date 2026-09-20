@@ -1,0 +1,611 @@
+/* =============================================================================
+   HUD chrome — angular panels, rails, chips, readouts.
+
+   Panels are built from two clipped layers: the outer element's background is the
+   hairline, the inner element inset by 1px is the surface. That gives a real border
+   that follows a cut corner, which `border` alone cannot do.
+   ========================================================================== */
+
+.hud {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-hud);
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr auto;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'top    top    top'
+    'left   center right'
+    'bottom bottom bottom';
+  gap: var(--gutter);
+  padding: 0 var(--gutter) var(--gutter);
+  /* The map underneath must stay interactive; panels opt back in. */
+  pointer-events: none;
+}
+
+.hud > * {
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ------------------------------- panel ---------------------------------- */
+
+.panel {
+  --clip: polygon(
+    0 var(--cut),
+    var(--cut) 0,
+    100% 0,
+    100% calc(100% - var(--cut)),
+    calc(100% - var(--cut)) 100%,
+    0 100%
+  );
+  position: relative;
+  padding: 1px;
+  background: var(--line);
+  clip-path: var(--clip);
+  box-shadow: var(--shadow-panel);
+  pointer-events: auto;
+  display: flex;
+  min-height: 0;
+}
+
+.panel__inner {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  clip-path: var(--clip);
+  background: var(--surface-1);
+  backdrop-filter: blur(16px) saturate(125%);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+}
+
+/* A faint interior grid so even an empty panel reads as instrumentation. */
+.panel__inner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(to right, var(--line-faint) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line-faint) 1px, transparent 1px);
+  background-size: 34px 34px;
+  opacity: 0.5;
+  mask-image: linear-gradient(to bottom, black, transparent 70%);
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent 70%);
+}
+
+.panel--flat {
+  --clip: none;
+}
+
+.panel--accent {
+  background: linear-gradient(160deg, var(--line-accent), var(--line) 45%);
+}
+
+/* --- panel header: notched bar with a tick rail -------------------------- */
+
+.panel__head {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 10px;
+  background: linear-gradient(to right, rgba(79, 216, 255, 0.07), transparent 65%);
+  border-bottom: 1px solid var(--line);
+}
+
+.panel__head::after {
+  /* Tick marks along the header's right side — a small instrument detail. */
+  content: '';
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  width: 26px;
+  height: 7px;
+  background: repeating-linear-gradient(
+    to right,
+    var(--line-strong) 0 1px,
+    transparent 1px 4px
+  );
+  opacity: 0.7;
+}
+
+.panel__title {
+  font-family: var(--font-mono);
+  font-size: var(--label-size);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.panel__count {
+  font-family: var(--font-mono);
+  font-size: var(--label-size);
+  letter-spacing: 0.08em;
+  color: var(--cyan);
+  opacity: 0.85;
+}
+
+.panel__head-spacer {
+  flex: 1;
+}
+
+.panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+}
+
+.panel__section {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-faint);
+}
+
+.panel__section:last-child {
+  border-bottom: none;
+}
+
+.panel__section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+  font-family: var(--font-mono);
+  font-size: var(--micro-size);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.panel__section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line-faint);
+}
+
+/* ------------------------------- rails ---------------------------------- */
+
+.rail {
+  height: 1px;
+  background: linear-gradient(to right, var(--line-strong), transparent);
+}
+
+.rail--v {
+  width: 1px;
+  height: auto;
+  background: linear-gradient(to bottom, var(--line-strong), transparent);
+}
+
+/* ------------------------------- chips ---------------------------------- */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 17px;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: var(--micro-size);
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--text-dim);
+  background: var(--surface-raise);
+  border: 1px solid var(--line);
+  clip-path: polygon(3px 0, 100% 0, 100% calc(100% - 3px), calc(100% - 3px) 100%, 0 100%, 0 3px);
+}
+
+.chip--cyan {
+  color: var(--cyan);
+  border-color: rgba(79, 216, 255, 0.4);
+  background: rgba(79, 216, 255, 0.08);
+}
+
+.chip--crimson {
+  color: var(--crimson);
+  border-color: rgba(255, 60, 95, 0.45);
+  background: rgba(255, 60, 95, 0.1);
+}
+
+.chip--amber {
+  color: var(--amber);
+  border-color: rgba(255, 162, 58, 0.4);
+  background: rgba(255, 162, 58, 0.08);
+}
+
+/* Violet is reserved for inference: AI-extracted values and pattern analysis. */
+.chip--violet {
+  color: var(--violet);
+  border-color: rgba(185, 140, 255, 0.45);
+  background: rgba(185, 140, 255, 0.1);
+}
+
+.chip--green {
+  color: var(--green);
+  border-color: rgba(76, 224, 168, 0.38);
+  background: rgba(76, 224, 168, 0.08);
+}
+
+.chip--ghost {
+  color: var(--text-faint);
+  background: transparent;
+}
+
+/* --------------------------- status indicator ---------------------------- */
+
+.dot {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  background: currentColor;
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+
+.dot--pulse {
+  animation: dot-pulse 2.4s var(--ease-in-out) infinite;
+}
+
+@keyframes dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.72);
+  }
+}
+
+/* ------------------------------ readouts -------------------------------- */
+
+.readout {
+  display: grid;
+  grid-template-columns: minmax(74px, 38%) 1fr;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+
+.readout__k {
+  font-family: var(--font-mono);
+  font-size: var(--micro-size);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding-top: 1px;
+}
+
+.readout__v {
+  font-size: 11.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.readout__v--mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+/* --------------------------- stat / big number --------------------------- */
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.stat__value {
+  font-family: var(--font-display);
+  font-size: 27px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--text-bright);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat__value--sm {
+  font-size: 19px;
+}
+
+.stat__unit {
+  font-family: var(--font-mono);
+  font-size: var(--micro-size);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* -------------------------------- meter ---------------------------------- */
+
+.meter {
+  position: relative;
+  height: 3px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.meter__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--cyan);
+  transition: width var(--t-med) var(--ease-out);
+}
+
+/* Segmented variant — reads as a gauge rather than a progress bar. */
+.meter--seg .meter__fill {
+  mask-image: repeating-linear-gradient(to right, black 0 3px, transparent 3px 5px);
+  -webkit-mask-image: repeating-linear-gradient(to right, black 0 3px, transparent 3px 5px);
+}
+
+/* ------------------------------- buttons --------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: var(--label-size);
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: var(--surface-raise);
+  border: 1px solid var(--line);
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+  transition: color var(--t-fast), background var(--t-fast), border-color var(--t-fast);
+}
+
+.btn:hover {
+  color: var(--text-bright);
+  border-color: var(--line-strong);
+  background: rgba(79, 216, 255, 0.1);
+}
+
+.btn[aria-pressed='true'],
+.btn--on {
+  color: var(--void);
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.btn--ghost {
+  background: transparent;
+}
+
+.btn--sm {
+  height: 19px;
+  padding: 0 7px;
+  font-size: var(--micro-size);
+}
+
+.btn--block {
+  width: 100%;
+}
+
+.btn--violet[aria-pressed='true'],
+.btn--violet.btn--on {
+  background: var(--violet);
+  border-color: var(--violet);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ------------------------------- inputs ---------------------------------- */
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  padding: 0 9px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  transition: border-color var(--t-fast);
+}
+
+.field:focus-within {
+  border-color: var(--line-accent);
+}
+
+.field input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-bright);
+}
+
+.field input::placeholder {
+  color: var(--text-ghost);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-size: 9.5px;
+}
+
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    var(--cyan) var(--pct, 50%),
+    rgba(255, 255, 255, 0.09) var(--pct, 50%)
+  );
+}
+
+.slider::-moz-range-track {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.09);
+}
+.slider::-moz-range-progress {
+  height: 2px;
+  background: var(--cyan);
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 3px;
+  height: 12px;
+  margin-top: -5px;
+  background: var(--cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+.slider::-moz-range-thumb {
+  width: 3px;
+  height: 12px;
+  border: none;
+  border-radius: 0;
+  background: var(--cyan);
+}
+
+/* ------------------------------ list rows -------------------------------- */
+
+.row {
+  position: relative;
+  display: grid;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px 6px 12px;
+  border-bottom: 1px solid var(--line-faint);
+  transition: background var(--t-fast);
+}
+
+.row::before {
+  /* Severity rail on the leading edge. */
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--rail);
+  background: var(--row-accent, var(--slate));
+  opacity: 0.75;
+}
+
+.row:hover {
+  background: rgba(79, 216, 255, 0.06);
+}
+
+.row[aria-selected='true'] {
+  background: rgba(79, 216, 255, 0.11);
+}
+
+.row[aria-selected='true']::before {
+  opacity: 1;
+  box-shadow: 0 0 9px var(--row-accent, var(--cyan));
+}
+
+/* New arrivals flash once, then settle. */
+@keyframes row-arrive {
+  0% {
+    background: rgba(79, 216, 255, 0.3);
+    transform: translateX(-6px);
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    background: transparent;
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.row--new {
+  animation: row-arrive 900ms var(--ease-out);
+}
+
+/* ------------------------------ scan bar --------------------------------- */
+
+/* Indeterminate processing indicator used by the extraction readout. */
+.scanbar {
+  position: relative;
+  height: 2px;
+  background: var(--surface-sunken);
+  overflow: hidden;
+}
+
+.scanbar::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  width: 34%;
+  background: linear-gradient(to right, transparent, var(--cyan), transparent);
+  animation: scanbar 1.5s var(--ease-in-out) infinite;
+}
+
+@keyframes scanbar {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+/* ------------------------------ corner tick ------------------------------ */
+
+.tick-corner {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  border-color: var(--line-strong);
+  border-style: solid;
+  border-width: 0;
+  pointer-events: none;
+}
+
+.tick-corner--tl {
+  top: 4px;
+  left: 4px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+.tick-corner--br {
+  bottom: 4px;
+  right: 4px;
+  border-bottom-width: 1px;
+  border-right-width: 1px;
+}
+
+/* ----------------------------- empty state ------------------------------- */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--text-ghost);
+}
