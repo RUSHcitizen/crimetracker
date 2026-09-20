@@ -1,9 +1,10 @@
-import type { AppMode, SourceStatus } from '@crimetracker/shared';
+import { catalogIds, findCatalogSource, type AppMode, type SourceStatus } from '@crimetracker/shared';
 import type { Config } from '../config.js';
 import { NullSpeechToText, WhisperHttpSpeechToText } from '../audio/stt.js';
 import type { IncidentExtractor } from '../extraction/types.js';
 import { PublicAudioSource } from './audio.js';
 import { SourcePolicyError } from './policy.js';
+import { CatalogFeedSource } from './catalogFeed.js';
 import { PublicSafetyFeedSource } from './publicFeed.js';
 import { SimulationSource } from './simulation.js';
 import type { DataSource } from './types.js';
@@ -44,6 +45,28 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
     }),
   );
 
+  // Catalogued real feeds, selected by id — the normal way to connect live data.
+  for (const id of config.sources) {
+    const catalogSource = findCatalogSource(id, config.catalogOverrideUrl);
+    if (!catalogSource) {
+      warnings.push(
+        `Unknown source "${id}". Available ids: ${catalogIds().join(', ')}.`,
+      );
+      continue;
+    }
+    try {
+      sources.push(
+        new CatalogFeedSource({
+          source: catalogSource,
+          pollSeconds: config.feed.pollSeconds,
+        }),
+      );
+    } catch (error) {
+      warnings.push(describe(catalogSource.id, error));
+    }
+  }
+
+  // Generic escape hatch for a feed that is not in the catalogue.
   if (config.feed.enabled) {
     try {
       sources.push(

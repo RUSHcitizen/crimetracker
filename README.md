@@ -4,8 +4,11 @@ A public-safety **incident visualization** system: a full-screen holographic map
 Washington State with a dense technical HUD, fed by a pluggable ingestion pipeline and a
 realtime WebSocket stream.
 
-It ships with a simulation engine, so it is fully functional with nothing connected — and
-it never presents simulated data as real.
+It runs on real published agency data — Seattle Fire 911 dispatch, SPD calls for service
+and SPD offence reports are catalogued and one setting away. It also ships a simulation
+engine so it is fully functional with nothing connected, and it never presents simulated
+data as real: the mode indicator reflects which sources are actually running, and live
+mode stops the simulation outright.
 
 ```
 npm install
@@ -116,29 +119,50 @@ interface DataSource {
 `server/src/sources/registry.ts` is the only place that names concrete adapters, so adding
 a provider is one new file plus one registry entry.
 
-### Public safety feed
+### Real data: the source catalogue
 
-`PublicSafetyFeedSource` is a configuration-driven poller for publicly accessible JSON or
-GeoJSON incident feeds. Connecting an open-data endpoint is a config change, not code:
+`shared/src/catalog.ts` ships a catalogue of real datasets published by the agencies
+themselves. Connecting one is an id, not a field-mapping exercise:
 
 ```bash
-FEED_URL=https://data.example.gov/resource/incidents.json
-FEED_POLL_SECONDS=60
-FEED_ITEMS_PATH=          # blank = the body is the array, or a GeoJSON FeatureCollection
-FEED_MAP_ID=incident_number
-FEED_MAP_TIMESTAMP=reported_datetime
-FEED_MAP_TYPE=call_type
-FEED_MAP_DESCRIPTION=description
-FEED_MAP_LOCATION=block_address
-FEED_MAP_LAT=latitude
-FEED_MAP_LON=longitude
+npm run sources                          # list what is catalogued
+npm run probe:source -- seattle-fire-911 # check the mapping against live data
 ```
 
-Rules the adapter enforces: the URL must be `https` (or loopback for local development),
-it must carry no credentials, `429` triggers back-off rather than retries, and every
-record goes through the same normalizer and schema validation as anything else.
+```bash
+MODE=live SOURCES=seattle-fire-911,seattle-police-calls npm run dev
+```
 
-Only connect feeds whose terms permit this use, and respect their rate limits.
+| id | What it is | Lag | Position |
+| --- | --- | --- | --- |
+| `seattle-fire-911` | Seattle Fire 911 dispatch — live calls | minutes | street address |
+| `seattle-police-calls` | SPD calls for service | hours | **blurred by SPD to block level** |
+| `seattle-crime-reports` | SPD offence reports (NIBRS) | days, revised | area |
+
+Three things the adapter takes seriously:
+
+* **Precision is the publisher's, not a guess.** Seattle PD deliberately blurs the
+  coordinates it releases. The catalogue records that, so those incidents render as
+  `APPROXIMATE LOCATION` at block level and are never drawn as precise points.
+* **Lag is stated.** "An offence report filed last week" and "a call dispatched two
+  minutes ago" must not look identical on a live map, so each source carries its
+  publication lag into the HUD.
+* **Polling is incremental.** Each adapter speaks its publisher's dialect for *newest
+  since X* (Socrata `$where`/`$order`, ArcGIS `where`/`orderByFields` with `outSR=4326`),
+  so a poll fetches new records rather than re-downloading the dataset. `429` backs off.
+
+Column names drift — publishers rename fields without notice. Each mapping therefore
+lists candidate paths, and `npm run probe:source` prints which one actually resolved
+against a live record plus the incident that would be stored. Run it before trusting a
+feed.
+
+Check each dataset's own terms and rate limits before pointing a continuous poller at it.
+
+### Generic feed
+
+For a source not in the catalogue, `FEED_URL` plus a field mapping still works — see
+`.env.example`. `CT_CATALOG_OVERRIDE_URL` points a catalogued source at a mirror or a
+local stub without forking the entry.
 
 ### Live vs simulation
 
@@ -194,11 +218,24 @@ Three rules the extraction layer will not bend:
 
 The API key is read from the server environment and is never sent to the browser.
 
-## 6. Optional public-audio pipeline
+## 6. Optional public-audio pipeline (police radio)
 
 ```
 PUBLIC AUDIO → AUDIO BUFFER → SPEECH-TO-TEXT → TRANSCRIPT → INCIDENT EXTRACTION
 ```
+
+**Read this before enabling it.** Most large Washington agencies — Seattle PD and King
+County among them — now encrypt their primary dispatch channels. Encrypted traffic is
+permanently out of scope: this project will not decode it and there is no setting that
+makes it try. What is available is whatever an agency still broadcasts in the clear, which
+in this region is considerably less than people expect.
+
+Where lawful unencrypted audio does exist, point this at a stream you are permitted to
+process. Aggregator sites generally forbid automated capture in their terms; an archive
+API you have access to, or your own receiver, is the usual lawful route.
+
+Structured feeds are preferred over audio wherever a source offers both: a dispatch record
+carries a time, a type and a position, while a transcript carries none of those reliably.
 
 Disabled by default. It requires **both** a stream URL and an explicit acknowledgement,
 so pointing it anywhere is always deliberate:
@@ -363,14 +400,16 @@ thousands of incidents cost a handful of layers rather than thousands of DOM nod
 npm test
 ```
 
-210 tests covering incident normalization, coordinate validation and rejection, timestamp
+231 tests covering incident normalization, coordinate validation and rejection, timestamp
 parsing, provenance rules, the simulation generator, the heuristic and OpenAI-compatible
 extractors, source policy and feed mapping, the audio buffer, pattern detection
 (including an equivalence check against a brute-force reference implementation and a
 performance bound), the repository and statistics, mode switching (that a stopped source really produces
 nothing), WebSocket origin enforcement, the realtime hub's batching, a live WebSocket
 round-trip, the REST API including its input-validation behaviour, and the Worker's
-configuration loader.
+configuration loader, the real-source catalogue (mapping against recorded response shapes,
+incremental poll URLs, rate-limit back-off, and that no catalogued source ever claims
+exact positions), and the rule that a LIVE deployment never backfills simulated history.
 
 ## 10. Security notes
 
@@ -388,8 +427,32 @@ configuration loader.
 * Sound is off by default and, when enabled, uses WebAudio-generated tones only — there
   are no audio assets in this project.
 
-## 11. Attribution
+## 11. Out of scope
+
+Some things this project deliberately does not do, and will not be extended to do:
+
+* **Decode encrypted radio.** No workaround, no setting, no exception.
+* **Analyse camera or CCTV footage to infer crimes.** Two separate problems. The feeds
+  usually described as "open cameras" are unsecured private devices whose owners never
+  intended public access, and reaching them is unauthorised access. And inferring
+  criminality about identifiable people from video produces accusations, not observations
+  — the opposite of a system built to keep source fact and inference visibly apart.
+  Public *traffic* cameras published by an agency for public display are a different
+  thing and could reasonably be added as a situational overlay, with no person-level
+  analysis.
+* **Identify or track individuals.** Nothing here is keyed to a person, and the incident
+  model has no field for one.
+* **Predict crime.** Pattern Detection describes concentrations in reports already
+  received, and says so wherever it appears.
+
+## 12. Attribution
 
 Boundary geometry: US Census Bureau cartographic boundary files (public domain), via the
-`us-atlas` package. Everything else — the interface, the simulation engine, the pattern
-detection and the visual design — is original to this project.
+`us-atlas` package.
+
+Incident data, when live sources are enabled, comes from the publishing agency and carries
+its attribution in the source panel — for the catalogued sources, the City of Seattle Open
+Data portal and the Seattle Police and Fire Departments.
+
+Everything else — the interface, the simulation engine, the pattern detection and the
+visual design — is original to this project.

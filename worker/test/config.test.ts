@@ -76,3 +76,23 @@ describe('publicWorkerConfig', () => {
     expect(JSON.parse(serialized).feedConfigured).toBe(true);
   });
 });
+
+describe('shouldPrimeSimulation', () => {
+  it('primes simulated history in simulation mode, once', async () => {
+    const { shouldPrimeSimulation } = await import('../src/config.js');
+    expect(shouldPrimeSimulation('simulation', false, 2400)).toBe(true);
+    expect(shouldPrimeSimulation('simulation', true, 2400)).toBe(false);
+  });
+
+  it('never primes it in live mode', async () => {
+    const { shouldPrimeSimulation } = await import('../src/config.js');
+    // The regression this guards: a LIVE deployment filling with invented records at boot.
+    expect(shouldPrimeSimulation('live', false, 2400)).toBe(false);
+    expect(shouldPrimeSimulation('live', true, 2400)).toBe(false);
+  });
+
+  it('respects a disabled backfill', async () => {
+    const { shouldPrimeSimulation } = await import('../src/config.js');
+    expect(shouldPrimeSimulation('simulation', false, 0)).toBe(false);
+  });
+});

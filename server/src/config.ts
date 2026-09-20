@@ -59,6 +59,10 @@ export interface Config {
     readonly backfill: number;
     readonly backfillHours: number;
   };
+  /** Catalogued real feeds to run, by id. See `SOURCE_CATALOG`. */
+  readonly sources: readonly string[];
+  /** Point a catalogued source at a mirror or local stub. Empty in normal use. */
+  readonly catalogOverrideUrl: string | null;
   readonly feed: {
     readonly enabled: boolean;
     readonly url: string;
@@ -119,6 +123,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       backfill: Math.max(0, num('SIM_BACKFILL', 2400)),
       backfillHours: Math.max(1, num('SIM_BACKFILL_HOURS', 12)),
     },
+    sources: list('SOURCES'),
+    catalogOverrideUrl: str('CT_CATALOG_OVERRIDE_URL') || null,
     feed: {
       enabled: feedUrl.length > 0,
       url: feedUrl,

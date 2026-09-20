@@ -9,6 +9,11 @@
   // the default build and deploy commands work with no dashboard configuration.
   //
   // `main` and `assets.directory` are resolved relative to this file.
+  //
+  // Note for local dev: wrangler auto-loads a root `.env`, but that file configures the
+  // Node server (PORT, HOST, CORS_ORIGINS, its own MODE) and would silently override the
+  // vars below. `npm run dev:worker` therefore passes `--env-file .dev.vars` so each
+  // runtime reads only its own configuration.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "crimetracker",
   "main": "worker/src/index.ts",
@@ -39,7 +44,10 @@
   "triggers": { "crons": ["*/5 * * * *"] },
 
   "vars": {
+    // "live" plus SOURCES runs real agency feeds instead of the simulation.
+    // Run `npm run sources` to list catalogued ids.
     "MODE": "simulation",
+    "SOURCES": "",
     "SIM_INTERVAL_SECONDS": "20",
     "SIM_BACKFILL": "2400",
     "SIM_BACKFILL_HOURS": "12",

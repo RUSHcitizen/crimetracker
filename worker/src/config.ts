@@ -18,6 +18,7 @@ export interface Env {
   readonly SIM_BACKFILL_HOURS?: string;
   readonly RETENTION_HOURS?: string;
 
+  readonly SOURCES?: string;
   readonly FEED_URL?: string;
   readonly FEED_NAME?: string;
   readonly FEED_POLL_SECONDS?: string;
@@ -53,6 +54,8 @@ export interface FeedFieldMap {
 
 export interface WorkerConfig {
   readonly mode: AppMode;
+  /** Catalogued real feeds to run, by id. */
+  readonly sources: readonly string[];
   readonly region: BBox;
   readonly retentionHours: number;
   readonly simulation: {
@@ -96,6 +99,10 @@ export function loadWorkerConfig(env: Env): WorkerConfig {
 
   return {
     mode: str(env.MODE, 'simulation').toLowerCase() === 'live' ? 'live' : 'simulation',
+    sources: str(env.SOURCES)
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean),
     region: WASHINGTON_BBOX,
     retentionHours: num(env.RETENTION_HOURS, 168),
     simulation: {
@@ -141,8 +148,26 @@ export function publicWorkerConfig(config: WorkerConfig) {
     region: config.region,
     patterns: config.patterns,
     aiProvider: config.ai.provider,
-    feedConfigured: config.feed.enabled,
+    feedConfigured: config.feed.enabled || config.sources.length > 0,
+    sources: config.sources,
     audioConfigured: false,
     runtime: 'cloudflare-worker' as const,
   };
+}
+
+/**
+ * Whether simulated history should be primed right now.
+ *
+ * Extracted so the rule is testable on its own: backfilling thousands of invented
+ * records into a LIVE deployment is precisely what the mode indicator exists to prevent,
+ * and the guard is easy to break by reordering the mode assignment around it.
+ */
+export function shouldPrimeSimulation(
+  mode: AppMode,
+  alreadyPrimed: boolean,
+  backfillCount: number,
+): boolean {
+  if (mode !== 'simulation') return false;
+  if (alreadyPrimed) return false;
+  return backfillCount > 0;
 }

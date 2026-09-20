@@ -23,9 +23,11 @@
     "test:watch": "vitest",
     "typecheck": "tsc -b shared server web && npm run typecheck --workspace worker",
     "prepare:geo": "node scripts/prepare-geo.mjs",
-    "dev:worker": "npm run build:web && wrangler dev",
+    "dev:worker": "npm run build:web && wrangler dev --env-file .dev.vars",
     "deploy": "npm run build:web && wrangler deploy",
-    "build:web": "npm run build --workspace shared && npm run build --workspace web"
+    "build:web": "npm run build --workspace shared && npm run build --workspace web",
+    "probe:source": "tsx scripts/probe-source.ts",
+    "sources": "tsx scripts/probe-source.ts"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

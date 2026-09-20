@@ -1,12 +1,15 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
+  buildPollUrl,
   createRng,
   detectPatterns,
+  findCatalogSource,
   IncidentRepository,
   extractRecords,
   incidentQuerySchema,
   INCIDENT_TYPE_META,
   mapRecord,
+  parseTimestamp,
   modeSchema,
   normalizeIncident,
   SimulationGenerator,
@@ -14,6 +17,7 @@ import {
   type Incident,
   type IncidentQuery,
   type PatternCluster,
+  type CatalogSource,
   type RawIncident,
   type ServerFrame,
   type SnapshotFrame,
@@ -21,7 +25,13 @@ import {
   type SourceStatus,
   type Stats,
 } from '@crimetracker/shared';
-import { loadWorkerConfig, publicWorkerConfig, type Env, type WorkerConfig } from './config.js';
+import {
+  loadWorkerConfig,
+  publicWorkerConfig,
+  shouldPrimeSimulation,
+  type Env,
+  type WorkerConfig,
+} from './config.js';
 import { migrate } from './driver.js';
 
 const SIMULATION_DESCRIPTOR: SourceDescriptor = {
@@ -43,8 +53,12 @@ interface SourceRuntime {
   rejected: number;
   lastEventAt: string | null;
   message: string | null;
-  /** Epoch ms of the next due poll, for the feed source. */
+  /** Epoch ms of the next due poll, for feed sources. */
   nextPollAt: number;
+  /** Catalogue entry, when this source is a catalogued real feed. */
+  catalog?: CatalogSource;
+  /** Newest accepted record time, for incremental polling. */
+  watermark?: string | null;
 }
 
 /**
@@ -74,6 +88,7 @@ export class TrackerRoom extends DurableObject<Env> {
   #rejected = 0;
   #nextSimAt = 0;
   #booted = false;
+  #simulationPrimed = false;
   #seenFeedIds = new Set<string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -86,6 +101,23 @@ export class TrackerRoom extends DurableObject<Env> {
     );
 
     this.#registerSource(SIMULATION_DESCRIPTOR);
+
+    // Catalogued real agency feeds, selected by id.
+    for (const id of this.#config.sources) {
+      const entry = findCatalogSource(id);
+      if (!entry) continue;
+      this.#registerSource(
+        {
+          id: entry.id,
+          name: entry.name,
+          kind: 'public-feed',
+          note: `${entry.note} Source: ${entry.attribution}. Publication lag: ${entry.latency}.`,
+          url: entry.url,
+        },
+        entry,
+      );
+    }
+
     if (this.#config.feed.enabled) {
       this.#registerSource({
         id: 'public-feed',
@@ -212,6 +244,7 @@ export class TrackerRoom extends DurableObject<Env> {
     }
 
     this.#mode = target;
+    this.#activateSimulation();
     for (const source of this.#sources.values()) {
       const belongs = (source.descriptor.kind === 'simulation' ? 'simulation' : 'live') === target;
       source.state = belongs ? 'online' : 'stopped';
@@ -278,16 +311,31 @@ export class TrackerRoom extends DurableObject<Env> {
 
   /* ---------------------------------- clock ---------------------------------- */
 
-  /** Start the alarm loop and backfill history the first time the object is used. */
+  /** Start the alarm loop, and prime simulated history only if simulation is active. */
   async #ensureStarted(): Promise<void> {
     if (!this.#booted) {
       this.#booted = true;
       await this.ctx.storage.put('booted', true);
-      if (this.#config.simulation.backfill > 0) this.#backfill();
+      this.#activateSimulation();
       this.runAnalysis();
     }
     const existing = await this.ctx.storage.getAlarm();
     if (existing === null) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+  }
+
+  /**
+   * Backfill fictional history, once, and only while simulation is the active mode.
+   *
+   * Doing this unconditionally at boot would fill a LIVE deployment with thousands of
+   * invented records the moment it started — the exact thing the mode indicator exists to
+   * prevent. Switching into simulation later primes it then instead.
+   */
+  #activateSimulation(): void {
+    if (!shouldPrimeSimulation(this.#mode, this.#simulationPrimed, this.#config.simulation.backfill)) {
+      return;
+    }
+    this.#simulationPrimed = true;
+    this.#backfill();
   }
 
   override async alarm(): Promise<void> {
@@ -302,10 +350,11 @@ export class TrackerRoom extends DurableObject<Env> {
     }
 
     if (this.#mode === 'live') {
-      const feed = this.#sources.get('public-feed');
-      if (feed && feed.state !== 'stopped' && now >= feed.nextPollAt) {
-        feed.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
-        await this.#pollFeed(feed);
+      for (const runtime of this.#sources.values()) {
+        if (runtime.descriptor.kind === 'simulation') continue;
+        if (runtime.state === 'stopped' || now < runtime.nextPollAt) continue;
+        runtime.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
+        await this.#pollFeed(runtime);
       }
     }
 
@@ -378,8 +427,15 @@ export class TrackerRoom extends DurableObject<Env> {
   }
 
   async #pollFeed(runtime: SourceRuntime): Promise<void> {
+    const catalog = runtime.catalog;
+    // A catalogued source speaks its publisher's dialect for "newest since X"; anything
+    // else is the generic configured feed.
+    const url = catalog
+      ? buildPollUrl(catalog, { since: runtime.watermark ?? null, limit: 200 })
+      : this.#config.feed.url;
+
     try {
-      const response = await fetch(this.#config.feed.url, {
+      const response = await fetch(url, {
         headers: {
           accept: 'application/json, application/geo+json;q=0.9, */*;q=0.1',
           'user-agent': 'CrimeTracker/0.1 (public incident visualization)',
@@ -401,17 +457,36 @@ export class TrackerRoom extends DurableObject<Env> {
 
       const body: unknown = await response.json();
       const raws: RawIncident[] = [];
-      for (const record of extractRecords(body, this.#config.feed.itemsPath)) {
-        const raw = mapRecord(record, this.#config.feed.map);
+      let newestMs = runtime.watermark ? Date.parse(runtime.watermark) : 0;
+
+      for (const record of extractRecords(body, catalog ? '' : this.#config.feed.itemsPath)) {
+        const raw = mapRecord(record, catalog ? catalog.map : this.#config.feed.map);
         if (!raw) {
           runtime.rejected += 1;
           continue;
         }
-        const key = raw.externalId ?? JSON.stringify([raw.timestamp, raw.description]);
+        const key = `${runtime.descriptor.id}:${
+          raw.externalId ?? JSON.stringify([raw.timestamp, raw.description])
+        }`;
         if (this.#seenFeedIds.has(key)) continue;
         this.#seenFeedIds.add(key);
-        raws.push(raw);
+
+        if (catalog) {
+          const stamped = parseTimestamp(raw.timestamp);
+          if (stamped) newestMs = Math.max(newestMs, Date.parse(stamped));
+          // The publisher's own precision, never `exact`, never a guess.
+          raws.push({
+            ...raw,
+            locationPrecision: catalog.precision,
+            area: catalog.area,
+            tags: [catalog.agency.toLowerCase(), catalog.adapter],
+          });
+        } else {
+          raws.push(raw);
+        }
       }
+
+      if (catalog && newestMs > 0) runtime.watermark = new Date(newestMs).toISOString();
       if (this.#seenFeedIds.size > 20_000) {
         this.#seenFeedIds = new Set([...this.#seenFeedIds].slice(-10_000));
       }
@@ -454,11 +529,13 @@ export class TrackerRoom extends DurableObject<Env> {
 
   /* ---------------------------------- sources -------------------------------- */
 
-  #registerSource(descriptor: SourceDescriptor): void {
+  #registerSource(descriptor: SourceDescriptor, catalog?: CatalogSource): void {
     this.#repo.upsertSource(descriptor);
     const belongs = (descriptor.kind === 'simulation' ? 'simulation' : 'live') === this.#config.mode;
     this.#sources.set(descriptor.id, {
       descriptor,
+      catalog,
+      watermark: null,
       state: belongs ? 'online' : 'stopped',
       ingested: 0,
       rejected: 0,
