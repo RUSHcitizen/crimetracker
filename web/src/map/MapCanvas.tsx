@@ -138,6 +138,16 @@ export function MapCanvas() {
       positionPlaceLabels(map, placePool);
     });
     map.on('idle', () => syncClusterLabels(map, labelsRef.current, labelPool));
+    /*
+     * Clustering is asynchronous: `idle` can fire before the incidents source has
+     * finished building its clusters, in which case `queryRenderedFeatures` returns
+     * nothing and the labels stay empty until the next map interaction or incident
+     * batch. Re-syncing when the source reports itself loaded closes that race.
+     */
+    map.on('sourcedata', (event) => {
+      if (event.sourceId !== SRC_INCIDENTS || !event.isSourceLoaded) return;
+      syncClusterLabels(map, labelsRef.current, labelPool);
+    });
 
     // Clicking empty map clears the selection.
     map.on('click', (event) => {
