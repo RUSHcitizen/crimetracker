@@ -241,6 +241,24 @@ npx wrangler login        # once, or set CLOUDFLARE_API_TOKEN
 npm run deploy            # builds the client, then `wrangler deploy`
 ```
 
+### Continuous deployment (Workers Builds)
+
+Connect the repository in the Cloudflare dashboard and leave the defaults:
+
+| Setting | Value |
+| --- | --- |
+| Build command | `npm run build` (or `npm run build:web` — the Worker does not need the Node server built) |
+| Deploy command | `npx wrangler deploy` |
+| Root directory | *(leave empty — the repository root)* |
+
+`wrangler.jsonc` sits at the repository root for this reason. Workers Builds runs the
+deploy command from the root; with the config nested under `worker/`, wrangler finds no
+config, falls back to auto-detection, sees an npm workspace root and fails with *"The
+Cloudflare application detection logic has been run in the root of a workspace instead of
+targeting a specific project."* Keeping the config at the root makes the default commands
+work with no dashboard configuration. `main` and `assets.directory` inside it are
+resolved relative to the config file.
+
 That publishes one Worker that serves everything from a single origin:
 
 ```
@@ -272,18 +290,18 @@ Why it is shaped this way:
 Run it locally against the real Workers runtime — no Cloudflare account needed:
 
 ```bash
-npm run build --workspace web
-npm run dev:worker        # http://127.0.0.1:8788
+npm run dev:worker        # builds the client, then serves on http://127.0.0.1:8788
 ```
 
-Configuration lives in `worker/wrangler.jsonc` under `vars` (mode, simulation rate,
-pattern thresholds, `FEED_URL` and its field mapping). Secrets never go there:
+Configuration lives in `wrangler.jsonc` under `vars` (mode, simulation rate, pattern
+thresholds, `FEED_URL` and its field mapping). Secrets never go there:
 
 ```bash
 npx wrangler secret put AI_API_KEY
 ```
 
-Locally, put secrets in `worker/.dev.vars` (gitignored; see `.dev.vars.example`).
+Locally, put secrets in `.dev.vars` at the repository root (gitignored; see
+`.dev.vars.example`).
 
 The optional public-audio pipeline is **not** part of the Cloudflare build: it needs a
 long-lived streaming connection, which a Worker request does not provide. Structured

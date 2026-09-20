@@ -23,8 +23,9 @@
     "test:watch": "vitest",
     "typecheck": "tsc -b shared server web && npm run typecheck --workspace worker",
     "prepare:geo": "node scripts/prepare-geo.mjs",
-    "dev:worker": "npm run dev --workspace worker",
-    "deploy": "npm run deploy --workspace worker"
+    "dev:worker": "npm run build:web && wrangler dev",
+    "deploy": "npm run build:web && wrangler deploy",
+    "build:web": "npm run build --workspace shared && npm run build --workspace web"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
@@ -33,6 +34,7 @@
     "topojson-client": "^3.1.0",
     "typescript": "^5.7.3",
     "us-atlas": "^3.0.1",
-    "vitest": "^3.0.5"
+    "vitest": "^3.0.5",
+    "wrangler": "^4.0.0"
   }
 }

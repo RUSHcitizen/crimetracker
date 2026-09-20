@@ -1,14 +1,24 @@
 {
+  // Lives at the repository root on purpose.
+  //
+  // This repo is an npm workspace, and the Worker is its single deployable unit.
+  // Cloudflare Workers Builds runs `npx wrangler deploy` from the repository root; with
+  // the config nested under `worker/`, wrangler finds no config there, falls back to
+  // auto-detection, sees a workspace root and refuses with "run in the root of a
+  // workspace instead of targeting a specific project". Keeping the config here means
+  // the default build and deploy commands work with no dashboard configuration.
+  //
+  // `main` and `assets.directory` are resolved relative to this file.
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "crimetracker",
-  "main": "src/index.ts",
+  "main": "worker/src/index.ts",
   "compatibility_date": "2025-01-15",
   "compatibility_flags": ["nodejs_compat"],
 
   // The built client is served straight from the Worker, so the API, the WebSocket and
   // the page are all same-origin — no CORS, and no second deployment to keep in step.
   "assets": {
-    "directory": "../web/dist",
+    "directory": "web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
   },
