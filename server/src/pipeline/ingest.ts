@@ -12,6 +12,7 @@ import {
 } from '@crimetracker/shared';
 import type { Config } from '../config.js';
 import type { IncidentRepository } from '../db/repository.js';
+import { modeOfSource } from '../sources/registry.js';
 import type { DataSource, SourceContext } from '../sources/types.js';
 import type { RealtimeHub } from './hub.js';
 
@@ -41,6 +42,8 @@ export class IngestionPipeline {
   readonly #logger: PipelineOptions['logger'];
   readonly #abort = new AbortController();
   readonly #sources: DataSource[] = [];
+  /** Sources currently started. A source not in here is not producing anything. */
+  readonly #running = new Set<string>();
   readonly #processingTimers = new Set<NodeJS.Timeout>();
 
   #patterns: PatternCluster[] = [];
@@ -74,10 +77,56 @@ export class IngestionPipeline {
     return this.#sources.map((source) => source.status());
   }
 
-  async register(source: DataSource): Promise<void> {
+  /**
+   * Add a source. It is NOT started here — `applyMode` decides which sources run, so
+   * that the active mode and the set of producing sources can never disagree.
+   */
+  register(source: DataSource): void {
     this.#repo.upsertSource(source.descriptor);
     this.#sources.push(source);
-    await source.start(this.#contextFor(source));
+  }
+
+  /** Whether any registered source can produce data in the given mode. */
+  canServe(mode: AppMode): boolean {
+    return this.#sources.some((source) => modeOfSource(source) === mode);
+  }
+
+  /**
+   * Start exactly the sources belonging to `mode` and stop every other one.
+   *
+   * This is what makes the LIVE/SIMULATION switch mean something: in live mode the
+   * simulation engine is genuinely stopped, so a simulated incident can never arrive
+   * while the interface says the feed is live.
+   */
+  async applyMode(mode: AppMode): Promise<void> {
+    const wanted = this.#sources.filter((source) => modeOfSource(source) === mode);
+    const wantedIds = new Set(wanted.map((source) => source.descriptor.id));
+
+    for (const source of this.#sources) {
+      const id = source.descriptor.id;
+      if (wantedIds.has(id)) continue;
+      if (!this.#running.has(id)) continue;
+      await source.stop().catch((error: unknown) => {
+        this.#logger.error(`failed to stop ${id}`, error);
+      });
+      this.#running.delete(id);
+      this.#logger.info(`source stopped: ${id}`);
+    }
+
+    for (const source of wanted) {
+      const id = source.descriptor.id;
+      if (this.#running.has(id)) continue;
+      try {
+        await source.start(this.#contextFor(source));
+        this.#running.add(id);
+        this.#logger.info(`source online: ${id} (${source.descriptor.kind})`);
+      } catch (error) {
+        this.#logger.error(`failed to start ${id}`, error);
+      }
+    }
+
+    this.#mode = mode;
+    this.#hub.publishMode(mode);
     this.#hub.publishSources(this.sourceStatuses());
   }
 
@@ -146,9 +195,24 @@ export class IngestionPipeline {
     return this.#repo.computeStats(this.#patterns.length);
   }
 
-  async setMode(mode: AppMode): Promise<void> {
-    this.#mode = mode;
-    this.#hub.publishMode(mode);
+  /**
+   * Switch modes. Refused when nothing could produce data in the requested mode —
+   * silently showing an empty LIVE feed, or a LIVE label over simulated data, would
+   * both be lies.
+   */
+  async setMode(mode: AppMode): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (mode === this.#mode) return { ok: true };
+    if (!this.canServe(mode)) {
+      return {
+        ok: false,
+        reason:
+          mode === 'live'
+            ? 'No live source is configured. Set FEED_URL to connect a publicly accessible feed.'
+            : 'The simulation engine is not available in this deployment.',
+      };
+    }
+    await this.applyMode(mode);
+    return { ok: true };
   }
 
   /* --------------------------------- internals -------------------------------- */
@@ -205,7 +269,11 @@ export class IngestionPipeline {
       // Backfilled history is already settled — no point animating it.
       if (now - Date.parse(incident.timestamp) > 120_000) continue;
 
-      const stages: IncidentStatus[] = ['transcribing', 'extracting', 'normalized', incident.status];
+      // De-duplicated: when the source already reported `normalized`, the walk would
+      // otherwise emit that stage twice in a row.
+      const stages: IncidentStatus[] = [
+        ...new Set<IncidentStatus>(['transcribing', 'extracting', 'normalized', incident.status]),
+      ];
       let delay = 400;
       for (const stage of stages) {
         const timer = setTimeout(() => {

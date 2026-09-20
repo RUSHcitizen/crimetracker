@@ -5,31 +5,42 @@ import { WASHINGTON_BBOX, type BBox } from '@crimetracker/shared';
  * except the small, explicitly-built `publicConfig` object.
  */
 
-function str(key: string, fallback = ''): string {
-  const value = process.env[key];
-  return value === undefined || value === '' ? fallback : value.trim();
-}
+/**
+ * Readers bound to a specific environment object.
+ *
+ * `loadConfig` takes the environment as a parameter, so these must read from it rather
+ * than reaching for `process.env` directly — otherwise a caller supplying an environment
+ * (a test, or an embedder) is silently ignored.
+ */
+function readers(env: NodeJS.ProcessEnv) {
+  const str = (key: string, fallback = ''): string => {
+    const value = env[key];
+    return value === undefined || value === '' ? fallback : value.trim();
+  };
 
-function num(key: string, fallback: number): number {
-  const raw = process.env[key];
-  if (raw === undefined || raw.trim() === '') return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
+  const num = (key: string, fallback: number): number => {
+    const raw = env[key];
+    if (raw === undefined || raw.trim() === '') return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
 
-function bool(key: string, fallback = false): boolean {
-  const raw = str(key);
-  if (!raw) return fallback;
-  return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
-}
+  const bool = (key: string, fallback = false): boolean => {
+    const raw = str(key);
+    if (!raw) return fallback;
+    return ['1', 'true', 'yes', 'on'].includes(raw.toLowerCase());
+  };
 
-function list(key: string, fallback: string[] = []): string[] {
-  const raw = str(key);
-  if (!raw) return fallback;
-  return raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const list = (key: string, fallback: string[] = []): string[] => {
+    const raw = str(key);
+    if (!raw) return fallback;
+    return raw
+      .split(',')
+      .map((part) => part.trim())
+      .filter(Boolean);
+  };
+
+  return { str, num, bool, list };
 }
 
 export interface FeedFieldMap {
@@ -91,7 +102,8 @@ export interface Config {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  void env;
+  const { str, num, bool, list } = readers(env);
+
   const aiProviderRaw = str('AI_PROVIDER', 'heuristic').toLowerCase();
   const aiProvider = aiProviderRaw === 'openai-compatible' ? 'openai-compatible' : 'heuristic';
   const sttRaw = str('STT_PROVIDER', 'null').toLowerCase();

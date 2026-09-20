@@ -142,9 +142,15 @@ Only connect feeds whose terms permit this use, and respect their rate limits.
 
 ### Live vs simulation
 
-`MODE=live` runs only configured real sources; it never falls back to simulated data. The
-in-app toggle switches the displayed mode. If you select live with nothing configured, the
-server says so at startup and no incidents will arrive — which is the honest outcome.
+The mode governs **which sources actually run**, not just a label. Every configured
+source is registered at startup, and the pipeline starts only those belonging to the
+active mode: in live mode the simulation engine is genuinely stopped, so a simulated
+incident cannot arrive while the interface reads LIVE.
+
+Switching is refused when nothing could serve the requested mode — `POST /api/mode`
+answers `409` with a reason, the indicator keeps showing the mode still in force, and the
+top bar states why. A LIVE label the server did not agree to would defeat the point of
+the indicator.
 
 ## 5. Configuring AI extraction
 
@@ -296,6 +302,10 @@ WebSocket round-trip, and the REST API including its input-validation behaviour.
 * Coordinates are validated and range-checked; anything that fails becomes `null` rather
   than a guess. Null island and out-of-region points are rejected.
 * Search terms are bound parameters, and `LIKE` metacharacters are escaped.
+* WebSocket upgrades are checked against the same origin allow-list as CORS. CORS does
+  not cover WebSockets, so without this any page could open a socket to the local server
+  and read the stream. Requests with no `Origin` header (curl, tests, native clients) are
+  allowed.
 * No API key, base URL or credential is ever sent to the browser; `GET /api/config`
   returns booleans, not endpoints.
 * Sound is off by default and, when enabled, uses WebAudio-generated tones only — there

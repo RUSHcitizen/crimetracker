@@ -253,7 +253,7 @@ function IncidentRow({
     <button
       type="button"
       className="row incidentrow"
-      aria-selected={selected}
+      aria-current={selected}
       onClick={onSelect}
       style={{ '--row-accent': `var(--sev-${incident.severity})` } as React.CSSProperties}
     >

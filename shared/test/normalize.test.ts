@@ -301,3 +301,34 @@ describe('applyExtraction', () => {
     expect(merged.location.approximate).toBe(true);
   });
 });
+
+describe('identifier derivation', () => {
+  it('does not collapse records whose external id sanitizes to nothing', () => {
+    const make = (externalId: string) =>
+      ok(
+        normalizeIncident(
+          { externalId, timestamp: RECENT, description: 'Theft reported on Pike St' },
+          { source: SOURCE, now: NOW },
+        ),
+      ).incident.id;
+
+    // Both ids are made entirely of characters the sanitizer strips.
+    const a = make('\u0000\u0000');
+    const b = make('‮​');
+    expect(a).not.toBe(b);
+    expect(a).not.toBe('test-feed:');
+    expect(b).not.toBe('test-feed:');
+  });
+
+  it('still derives a stable id from a usable external id', () => {
+    const make = () =>
+      ok(
+        normalizeIncident(
+          { externalId: ' CAD-77 ', timestamp: RECENT, description: 'Theft' },
+          { source: SOURCE, now: NOW },
+        ),
+      ).incident.id;
+    expect(make()).toBe('test-feed:CAD-77');
+    expect(make()).toBe(make());
+  });
+});

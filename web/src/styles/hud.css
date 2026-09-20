@@ -514,11 +514,11 @@
   background: rgba(79, 216, 255, 0.06);
 }
 
-.row[aria-selected='true'] {
+.row[aria-current='true'] {
   background: rgba(79, 216, 255, 0.11);
 }
 
-.row[aria-selected='true']::before {
+.row[aria-current='true']::before {
   opacity: 1;
   box-shadow: 0 0 9px var(--row-accent, var(--cyan));
 }

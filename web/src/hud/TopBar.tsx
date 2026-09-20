@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatClock, formatRelative } from '@crimetracker/shared';
 import { useTracker } from '../state/store.js';
 import { setServerMode } from '../lib/api.js';
@@ -22,6 +22,8 @@ export function TopBar() {
   const setUi = useTracker((s) => s.setUi);
 
   const [now, setNow] = useState(() => new Date());
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<number | null>(null);
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(id);
@@ -38,9 +40,26 @@ export function TopBar() {
 
   const toggleMode = async () => {
     const next = mode === 'simulation' ? 'live' : 'simulation';
-    const applied = await setServerMode(next);
-    if (applied) setMode(applied);
+    const result = await setServerMode(next);
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+
+    if (result.ok) {
+      setMode(result.mode);
+      setNotice(null);
+      return;
+    }
+    // The server would not switch, so the indicator stays as it was and says why.
+    if (result.mode) setMode(result.mode);
+    setNotice(result.reason);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 7000);
   };
+
+  useEffect(
+    () => () => {
+      if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+    },
+    [],
+  );
 
   return (
     <header className="topbar">
@@ -75,6 +94,13 @@ export function TopBar() {
           {mode === 'simulation' ? 'FICTIONAL DATA' : 'PUBLIC SOURCES'}
         </span>
       </button>
+
+      {notice && (
+        <div className="modenotice" role="status">
+          <span className="modenotice__bar" />
+          <span className="modenotice__text">{notice}</span>
+        </div>
+      )}
 
       <div className="topbar__spacer" />
 

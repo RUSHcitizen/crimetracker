@@ -117,7 +117,7 @@ function StreamCard({
     <button
       type="button"
       className={`streamcard ${isNew ? 'streamcard--new' : ''}`}
-      aria-selected={selected}
+      aria-current={selected}
       onClick={onSelect}
       style={{ '--row-accent': `var(--sev-${incident.severity})` } as React.CSSProperties}
     >

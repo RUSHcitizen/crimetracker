@@ -286,15 +286,17 @@ describe('GET /api/sources and POST /api/mode', () => {
     expect(body.mode).toBe('simulation');
   });
 
-  it('switches mode and rejects an invalid one', async () => {
-    const ok = await app.inject({ method: 'POST', url: '/api/mode', payload: { mode: 'live' } });
-    expect(ok.statusCode).toBe(200);
-    expect(pipeline.mode).toBe('live');
+  it('refuses live mode when no live source is registered', async () => {
+    // This harness registers a simulation-kind source only, so switching to live would
+    // put a LIVE label over simulated data. The server must refuse instead.
+    const refused = await app.inject({ method: 'POST', url: '/api/mode', payload: { mode: 'live' } });
+    expect(refused.statusCode).toBe(409);
+    expect(pipeline.mode).toBe('simulation');
+  });
 
+  it('rejects an invalid mode', async () => {
     const bad = await app.inject({ method: 'POST', url: '/api/mode', payload: { mode: 'chaos' } });
     expect(bad.statusCode).toBe(400);
-
-    await app.inject({ method: 'POST', url: '/api/mode', payload: { mode: 'simulation' } });
   });
 });
 
@@ -332,5 +334,34 @@ describe('ingestion', () => {
     const before = repository.countIncidents();
     pipeline.ingest(source, [record]);
     expect(repository.countIncidents()).toBe(before);
+  });
+});
+
+describe('config loading', () => {
+  it('reads the environment it is given, not the ambient process env', async () => {
+    const { loadConfig: load } = await import('../src/config.js');
+    const custom = load({
+      PORT: '9911',
+      MODE: 'live',
+      PATTERN_EPS_KM: '3.5',
+      CORS_ORIGINS: 'https://a.example,https://b.example',
+      FEED_URL: 'https://data.example.gov/feed.json',
+    } as NodeJS.ProcessEnv);
+
+    expect(custom.port).toBe(9911);
+    expect(custom.mode).toBe('live');
+    expect(custom.patterns.epsKm).toBe(3.5);
+    expect(custom.corsOrigins).toEqual(['https://a.example', 'https://b.example']);
+    expect(custom.feed.enabled).toBe(true);
+  });
+
+  it('falls back to defaults for an empty environment', async () => {
+    const { loadConfig: load } = await import('../src/config.js');
+    const empty = load({} as NodeJS.ProcessEnv);
+    expect(empty.port).toBe(8787);
+    expect(empty.mode).toBe('simulation');
+    expect(empty.feed.enabled).toBe(false);
+    expect(empty.audio.enabled).toBe(false);
+    expect(empty.ai.provider).toBe('heuristic');
   });
 });

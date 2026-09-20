@@ -89,7 +89,13 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
   app.post('/api/mode', async (request, reply) => {
     const parsed = modeSchema.safeParse(request.body);
     if (!parsed.success) return reply.status(400).send({ error: 'invalid-mode' });
-    await pipeline.setMode(parsed.data.mode);
+
+    const result = await pipeline.setMode(parsed.data.mode);
+    if (!result.ok) {
+      // 409: the request was well-formed, the server just cannot honour it in its
+      // current configuration. The client shows the reason rather than a wrong label.
+      return reply.status(409).send({ error: 'mode-unavailable', reason: result.reason, mode: pipeline.mode });
+    }
     return { mode: pipeline.mode };
   });
 

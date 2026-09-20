@@ -765,7 +765,7 @@
   background: rgba(79, 216, 255, 0.06);
 }
 
-.streamcard[aria-selected='true'] {
+.streamcard[aria-current='true'] {
   background: rgba(79, 216, 255, 0.12);
 }
 
@@ -779,7 +779,7 @@
   opacity: 0.8;
 }
 
-.streamcard[aria-selected='true'] .streamcard__rail {
+.streamcard[aria-current='true'] .streamcard__rail {
   box-shadow: 0 0 10px var(--row-accent);
 }
 
@@ -1726,4 +1726,38 @@
   text-transform: none;
   letter-spacing: 0.02em;
   color: var(--text-ghost);
+}
+
+/* Shown when the server refuses a mode change. The indicator must never claim a mode
+   the server did not agree to, so the reason is stated instead. */
+.modenotice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+  padding: 4px 10px 4px 0;
+  background: rgba(255, 162, 58, 0.09);
+  border: 1px solid rgba(255, 162, 58, 0.38);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%);
+  animation: fade-in var(--t-med) var(--ease-out);
+}
+
+.modenotice__bar {
+  width: 3px;
+  align-self: stretch;
+  background: var(--amber);
+}
+
+.modenotice__text {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 0.06em;
+  color: rgba(255, 190, 120, 0.92);
+}
+
+@media (max-width: 1100px) {
+  .modenotice {
+    display: none;
+  }
 }

@@ -29,7 +29,26 @@ async function main(): Promise<void> {
     origin: config.corsOrigins.length > 0 ? config.corsOrigins : false,
     methods: ['GET', 'POST'],
   });
-  await app.register(websocket, { options: { maxPayload: 1024 * 1024 } });
+  /*
+   * WebSocket upgrades are not covered by CORS: a browser will happily let any page
+   * open a socket to this server and read the whole incident stream. The allowed-origin
+   * list is therefore enforced on the handshake as well.
+   *
+   * A request with no Origin header is not a browser page, so it is allowed — that is
+   * how curl, tests and native clients connect.
+   */
+  const allowedOrigins = new Set(config.corsOrigins);
+  await app.register(websocket, {
+    options: {
+      maxPayload: 1024 * 1024,
+      verifyClient: (info: { origin?: string }, next: (ok: boolean, code?: number, message?: string) => void) => {
+        const origin = info.origin;
+        if (!origin || allowedOrigins.has(origin)) return next(true);
+        app.log.warn(`rejected websocket upgrade from disallowed origin: ${origin}`);
+        next(false, 403, 'Origin not allowed');
+      },
+    },
+  });
 
   const db = openDatabase(config.databasePath);
   const repository = new IncidentRepository(db);
@@ -68,10 +87,15 @@ async function main(): Promise<void> {
 
   const { sources, warnings } = buildSources(config, extractor);
   for (const warning of warnings) app.log.warn(warning);
-  for (const source of sources) {
-    await pipeline.register(source);
-    app.log.info(`source online: ${source.descriptor.id} (${source.descriptor.kind})`);
+  for (const source of sources) pipeline.register(source);
+
+  // Only the sources belonging to the configured mode are started.
+  if (!pipeline.canServe(config.mode)) {
+    app.log.error(
+      `MODE=${config.mode} was requested but no source can serve it. No incidents will arrive.`,
+    );
   }
+  await pipeline.applyMode(config.mode);
 
   // First analysis pass so a client connecting immediately sees patterns and stats.
   pipeline.runAnalysis();

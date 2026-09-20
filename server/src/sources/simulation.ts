@@ -33,6 +33,8 @@ export class SimulationSource implements DataSource {
   #timer: NodeJS.Timeout | null = null;
   #ctx: SourceContext | null = null;
   #stopped = false;
+  /** Backfill is history, so it happens once per process, not on every restart. */
+  #hasBackfilled = false;
 
   constructor(options: SimulationSourceOptions) {
     this.#options = options;
@@ -49,7 +51,8 @@ export class SimulationSource implements DataSource {
     this.#tracker.setState('connecting', 'Priming simulation');
     ctx.setState('connecting', 'Priming simulation');
 
-    if (this.#options.backfill > 0) {
+    if (this.#options.backfill > 0 && !this.#hasBackfilled) {
+      this.#hasBackfilled = true;
       this.#backfill(ctx);
     }
 

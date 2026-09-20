@@ -194,9 +194,10 @@ export function normalizeIncident(raw: RawIncident, options: NormalizeOptions): 
   if (incidentType === 'other') confidence = Math.min(confidence, 0.5);
 
   /* --- assemble ------------------------------------------------------------- */
-  const id = raw.externalId
-    ? `${source.id}:${sanitizeText(raw.externalId, 48)}`
-    : `${source.id}:${randomUUID()}`;
+  // An external id made only of characters the sanitizer strips would collapse every
+  // such record onto the id "<source>:", silently overwriting one with the next.
+  const externalId = raw.externalId ? sanitizeText(raw.externalId, 48) : '';
+  const id = externalId ? `${source.id}:${externalId}` : `${source.id}:${randomUUID()}`;
 
   const candidate: Incident = {
     id,

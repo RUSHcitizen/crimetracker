@@ -49,17 +49,35 @@ export async function fetchIncident(id: string, signal?: AbortSignal): Promise<I
   }
 }
 
-export async function setServerMode(mode: AppMode): Promise<AppMode | null> {
+export type ModeChange =
+  | { ok: true; mode: AppMode }
+  | { ok: false; reason: string; mode: AppMode | null };
+
+/**
+ * Request a mode change.
+ *
+ * The server refuses (409) when nothing could serve the requested mode. That refusal is
+ * returned rather than swallowed: showing a LIVE label the server did not agree to would
+ * defeat the point of the indicator.
+ */
+export async function setServerMode(mode: AppMode): Promise<ModeChange> {
   try {
     const response = await fetch('/api/mode', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode }),
     });
-    if (!response.ok) return null;
-    const data = (await response.json()) as { mode: AppMode };
-    return data.mode;
+    const data = (await response.json().catch(() => null)) as
+      | { mode?: AppMode; reason?: string }
+      | null;
+
+    if (response.ok && data?.mode) return { ok: true, mode: data.mode };
+    return {
+      ok: false,
+      reason: data?.reason ?? `Mode change refused (HTTP ${response.status}).`,
+      mode: data?.mode ?? null,
+    };
   } catch {
-    return null;
+    return { ok: false, reason: 'Could not reach the server.', mode: null };
   }
 }

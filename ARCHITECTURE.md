@@ -89,6 +89,12 @@ Implementations shipped:
 The app never depends on a specific provider: the registry owns a list of `DataSource`s
 and the pipeline only knows the interface.
 
+**Mode is enforced, not displayed.** Every configured source is registered at startup;
+`IngestionPipeline.applyMode` then starts exactly those whose kind belongs to the active
+mode and stops the rest (`simulation` kind → simulation mode, everything else → live).
+A switch to a mode no registered source can serve is refused rather than applied, so the
+LIVE/SIMULATION indicator can never describe something the server is not doing.
+
 ### Legal / ethical boundaries (enforced in code, not just docs)
 
 `server/src/sources/policy.ts` rejects any source URL that is not `https:` (or explicit

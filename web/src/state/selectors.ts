@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   containsPoint,
   haversineKm,
@@ -58,6 +58,24 @@ export function matchesFilters(
 }
 
 /**
+ * A coarse clock that advances every 30 seconds.
+ *
+ * The time-window filter needs a current `now`; without this the cutoff is frozen at the
+ * moment of the last memo, so incidents age out of a "last 15 minutes" window only when
+ * something *else* changes. On a quiet feed they would linger indefinitely.
+ */
+const CLOCK_INTERVAL_MS = 30_000;
+
+function useCoarseClock(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), CLOCK_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, []);
+  return now;
+}
+
+/**
  * The filtered incident list.
  *
  * Memoized on `version` rather than the array identity so unrelated store updates
@@ -68,13 +86,13 @@ export function useFilteredIncidents(): Incident[] {
   const version = useTracker((s) => s.version);
   const filters = useTracker((s) => s.filters);
   const viewport = useTracker((s) => (s.filters.viewportOnly ? s.viewportBounds : null));
+  const now = useCoarseClock();
 
   return useMemo(() => {
-    const now = Date.now();
     return incidents.filter((incident) => matchesFilters(incident, filters, now, viewport));
     // `incidents` is intentionally keyed through `version`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [version, filters, viewport]);
+  }, [version, filters, viewport, now]);
 }
 
 export function useSelectedIncident(): Incident | null {
