@@ -1,4 +1,10 @@
-import { WASHINGTON_BBOX, type AppMode, type BBox } from '@crimetracker/shared';
+import {
+  DEFAULT_CAMERA_IMAGE_HOSTS,
+  requiredSourceKeys,
+  WASHINGTON_BBOX,
+  type AppMode,
+  type BBox,
+} from '@crimetracker/shared';
 
 /**
  * Worker configuration.
@@ -37,6 +43,12 @@ export interface Env {
 
   /** Secret. Never reaches the browser. */
   readonly AI_API_KEY?: string;
+  /** Secret. WSDOT's free access code, used by the highway-alert feed and the cameras. */
+  readonly WSDOT_ACCESS_CODE?: string;
+  readonly CAMERAS_ACCESS_CODE?: string;
+  readonly CAMERAS_URL?: string;
+  readonly CAMERAS_REFRESH_MINUTES?: string;
+  readonly CAMERA_IMAGE_HOSTS?: string;
   readonly AI_PROVIDER?: string;
   readonly AI_BASE_URL?: string;
   readonly AI_MODEL?: string;
@@ -56,6 +68,15 @@ export interface WorkerConfig {
   readonly mode: AppMode;
   /** Catalogued real feeds to run, by id. */
   readonly sources: readonly string[];
+  /** Access keys for the configured sources, by the variable each one declares. */
+  readonly sourceKeys: Readonly<Record<string, string>>;
+  readonly cameras: {
+    readonly enabled: boolean;
+    readonly url: string;
+    readonly accessCode: string;
+    readonly refreshMinutes: number;
+    readonly imageHosts: readonly string[];
+  };
   readonly region: BBox;
   readonly retentionHours: number;
   readonly simulation: {
@@ -96,13 +117,32 @@ const num = (value: string | undefined, fallback: number): number => {
 export function loadWorkerConfig(env: Env): WorkerConfig {
   const feedUrl = str(env.FEED_URL);
   const aiProvider = str(env.AI_PROVIDER, 'heuristic').toLowerCase();
+  const sources = str(env.SOURCES)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  // One free WSDOT registration serves both the highway-alert feed and the camera overlay.
+  const cameraCode = str(env.CAMERAS_ACCESS_CODE) || str(env.WSDOT_ACCESS_CODE);
 
   return {
     mode: str(env.MODE, 'simulation').toLowerCase() === 'live' ? 'live' : 'simulation',
-    sources: str(env.SOURCES)
-      .split(',')
-      .map((part) => part.trim())
-      .filter(Boolean),
+    sources,
+    sourceKeys: readSourceKeys(sources, env),
+    cameras: {
+      enabled: cameraCode.length > 0,
+      url: str(
+        env.CAMERAS_URL,
+        'https://www.wsdot.wa.gov/Traffic/api/HighwayCameras/HighwayCamerasREST.svc/GetCamerasAsJson',
+      ),
+      accessCode: cameraCode,
+      refreshMinutes: Math.max(15, num(env.CAMERAS_REFRESH_MINUTES, 360)),
+      imageHosts: str(env.CAMERA_IMAGE_HOSTS)
+        ? str(env.CAMERA_IMAGE_HOSTS)
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean)
+        : DEFAULT_CAMERA_IMAGE_HOSTS,
+    },
     region: WASHINGTON_BBOX,
     retentionHours: num(env.RETENTION_HOURS, 168),
     simulation: {
@@ -151,8 +191,25 @@ export function publicWorkerConfig(config: WorkerConfig) {
     feedConfigured: config.feed.enabled || config.sources.length > 0,
     sources: config.sources,
     audioConfigured: false,
+    camerasConfigured: config.cameras.enabled,
     runtime: 'cloudflare-worker' as const,
   };
+}
+
+/**
+ * Read only the key variables the configured sources declare.
+ *
+ * `Env` is a plain binding object on Workers, so this indexes it dynamically; nothing
+ * outside the declared set is ever read, and none of it reaches `publicWorkerConfig`.
+ */
+function readSourceKeys(sources: readonly string[], env: Env): Record<string, string> {
+  const keys: Record<string, string> = {};
+  const bag = env as unknown as Record<string, string | undefined>;
+  for (const { keyEnv } of requiredSourceKeys(sources)) {
+    const value = str(bag[keyEnv]);
+    if (value) keys[keyEnv] = value;
+  }
+  return keys;
 }
 
 /**

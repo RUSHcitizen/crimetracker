@@ -83,6 +83,13 @@ Implementations shipped:
   accessible structured incident feeds (JSON / GeoJSON over HTTPS). The field mapping is
   declared in config, so connecting a new open-data endpoint is a config change, not a
   code change. Disabled unless configured.
+* **`CatalogFeedSource`** — the normal way to connect real data. Drives an entry from
+  `shared/src/catalog.ts`, which names a published agency dataset along with what its
+  coordinates actually mean, how far behind it runs, and how to ask it for *newest since
+  X* in its own dialect. Selected by id (`SOURCES=seattle-fire-911`), or by an ad-hoc
+  spec (`socrata:<host>/<dataset>`, `arcgis:<layer url>`, `geojson:<url>`) for a dataset
+  nobody has catalogued. Where a publisher issues an access key it is held per source,
+  appended per request, and kept out of the descriptor, the logs and every error message.
 * **`PublicAudioSource`** — optional. Pulls a **publicly accessible** audio stream into a
   rolling buffer → `SpeechToText` → `IncidentExtractor`. Disabled by default.
 
@@ -95,12 +102,30 @@ mode and stops the rest (`simulation` kind → simulation mode, everything else 
 A switch to a mode no registered source can serve is refused rather than applied, so the
 LIVE/SIMULATION indicator can never describe something the server is not doing.
 
+### Not incidents: the camera overlay
+
+`shared/src/cameras.ts` and `server/src/cameras/directory.ts` provide public roadway
+camera positions and image URLs as a **separate resource** from incidents — a different
+endpoint, a different client collection, a different map layer and a different colour.
+Cameras never enter the incident store, the statistics or the pattern detector, because a
+camera is a view of a road and an incident is a report that something happened; a design
+that blurred the two would be the interface lying about what the data is.
+
+The images are loaded by the viewer's browser straight from the agency and are never
+recorded, proxied or analysed. Image URLs are validated against a host allow-list before
+the browser is pointed at them. There is no path from this module to an image analyser
+and none should be added — see the README's *Out of scope*.
+
 ### Legal / ethical boundaries (enforced in code, not just docs)
 
 `server/src/sources/policy.ts` rejects any source URL that is not `https:` (or explicit
-loopback for local development), and the audio source refuses to start without an
-explicit `PUBLIC_AUDIO_ACK=1` acknowledgement. There is no support — and no code path —
-for encrypted feeds, credentialed private feeds, or access-control circumvention.
+loopback for local development), refuses URLs carrying credentials, and the audio source
+refuses to start without an explicit `PUBLIC_AUDIO_ACK=1` acknowledgement. Ad-hoc source
+specs are held to the same rule before they are even built into a source. There is no
+support — and no code path — for encrypted feeds, credentialed private feeds, or
+access-control circumvention. A publisher's own freely-issued access code (WSDOT) is the
+one credential the system carries, and it is used exactly as that agency intends: to
+identify a consumer of public traveller data, not to reach anything non-public.
 
 ---
 

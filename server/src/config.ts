@@ -1,4 +1,10 @@
-import { WASHINGTON_BBOX, type BBox, type FeedFieldMap } from '@crimetracker/shared';
+import {
+  DEFAULT_CAMERA_IMAGE_HOSTS,
+  requiredSourceKeys,
+  WASHINGTON_BBOX,
+  type BBox,
+  type FeedFieldMap,
+} from '@crimetracker/shared';
 
 /**
  * All configuration comes from the environment. Nothing here is ever sent to the browser
@@ -63,6 +69,22 @@ export interface Config {
   readonly sources: readonly string[];
   /** Point a catalogued source at a mirror or local stub. Empty in normal use. */
   readonly catalogOverrideUrl: string | null;
+  /**
+   * Access keys for the configured sources, keyed by the variable each one reads.
+   *
+   * Only the variables the configured sources actually declare are read, so an unrelated
+   * secret in the environment is never picked up and never travels with a request.
+   */
+  readonly sourceKeys: Readonly<Record<string, string>>;
+  readonly cameras: {
+    readonly enabled: boolean;
+    readonly provider: 'wsdot';
+    readonly url: string;
+    readonly accessCode: string;
+    readonly refreshMinutes: number;
+    /** Hosts a camera still may be loaded from. Anything else is dropped. */
+    readonly imageHosts: readonly string[];
+  };
   readonly feed: {
     readonly enabled: boolean;
     readonly url: string;
@@ -108,6 +130,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const audioAck = bool('PUBLIC_AUDIO_ACK');
 
   const feedUrl = str('FEED_URL');
+  const sources = list('SOURCES');
+  // Cameras default to the same WSDOT code the highway-alerts source uses, so one free
+  // registration turns on both rather than asking for the same key twice.
+  const cameraCode = str('CAMERAS_ACCESS_CODE') || str('WSDOT_ACCESS_CODE');
 
   return {
     port: num('PORT', 8787),
@@ -123,8 +149,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       backfill: Math.max(0, num('SIM_BACKFILL', 2400)),
       backfillHours: Math.max(1, num('SIM_BACKFILL_HOURS', 12)),
     },
-    sources: list('SOURCES'),
+    sources,
     catalogOverrideUrl: str('CT_CATALOG_OVERRIDE_URL') || null,
+    sourceKeys: readSourceKeys(sources, str),
+    cameras: {
+      // Cameras are an overlay, not an incident source: they are only fetched when the
+      // operator has supplied the agency's free access code.
+      enabled: cameraCode.length > 0,
+      provider: 'wsdot',
+      url: str(
+        'CAMERAS_URL',
+        'https://www.wsdot.wa.gov/Traffic/api/HighwayCameras/HighwayCamerasREST.svc/GetCamerasAsJson',
+      ),
+      accessCode: cameraCode,
+      refreshMinutes: Math.max(15, num('CAMERAS_REFRESH_MINUTES', 360)),
+      imageHosts: list('CAMERA_IMAGE_HOSTS', [...DEFAULT_CAMERA_IMAGE_HOSTS]),
+    },
     feed: {
       enabled: feedUrl.length > 0,
       url: feedUrl,
@@ -180,5 +220,21 @@ export function publicConfig(config: Config) {
     // Booleans only — never URLs or keys.
     feedConfigured: config.feed.enabled,
     audioConfigured: config.audio.enabled,
+    // A boolean, so the client knows whether to offer the overlay. The access code that
+    // makes it work stays on the server.
+    camerasConfigured: config.cameras.enabled,
   };
+}
+
+/** Read only the key variables the configured sources declare. */
+function readSourceKeys(
+  sources: readonly string[],
+  str: (key: string, fallback?: string) => string,
+): Record<string, string> {
+  const keys: Record<string, string> = {};
+  for (const { keyEnv } of requiredSourceKeys(sources)) {
+    const value = str(keyEnv);
+    if (value) keys[keyEnv] = value;
+  }
+  return keys;
 }

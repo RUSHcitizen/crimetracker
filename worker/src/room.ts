@@ -1,6 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import {
   buildPollUrl,
+  CAMERA_USE_NOTICE,
   createRng,
   detectPatterns,
   findCatalogSource,
@@ -9,6 +10,7 @@ import {
   incidentQuerySchema,
   INCIDENT_TYPE_META,
   mapRecord,
+  mapWsdotCameras,
   parseTimestamp,
   modeSchema,
   normalizeIncident,
@@ -17,6 +19,7 @@ import {
   type Incident,
   type IncidentQuery,
   type PatternCluster,
+  type CameraDirectory,
   type CatalogSource,
   type RawIncident,
   type ServerFrame,
@@ -90,6 +93,11 @@ export class TrackerRoom extends DurableObject<Env> {
   #booted = false;
   #simulationPrimed = false;
   #seenFeedIds = new Set<string>();
+  #cameras: CameraDirectory | null = null;
+  #camerasAtMs = 0;
+  #camerasMessage: string | null = null;
+  /** True only when a refresh failed, not merely when records were filtered out. */
+  #camerasFailed = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -106,6 +114,9 @@ export class TrackerRoom extends DurableObject<Env> {
     for (const id of this.#config.sources) {
       const entry = findCatalogSource(id);
       if (!entry) continue;
+      // A publisher that issues an access key cannot be polled without one: registering
+      // the source anyway would show it online in the HUD while it only ever 401s.
+      if (entry.keyEnv && !this.#config.sourceKeys[entry.keyEnv]) continue;
       this.#registerSource(
         {
           id: entry.id,
@@ -184,6 +195,9 @@ export class TrackerRoom extends DurableObject<Env> {
 
       case 'GET /api/sources':
         return json({ sources: this.#sourceStatuses(), mode: this.#mode });
+
+      case 'GET /api/cameras':
+        return this.#handleCameras();
 
       case 'POST /api/mode':
         return this.#handleMode(request);
@@ -430,8 +444,9 @@ export class TrackerRoom extends DurableObject<Env> {
     const catalog = runtime.catalog;
     // A catalogued source speaks its publisher's dialect for "newest since X"; anything
     // else is the generic configured feed.
+    const apiKey = catalog?.keyEnv ? this.#config.sourceKeys[catalog.keyEnv] ?? null : null;
     const url = catalog
-      ? buildPollUrl(catalog, { since: runtime.watermark ?? null, limit: 200 })
+      ? buildPollUrl(catalog, { since: runtime.watermark ?? null, limit: 200, apiKey })
       : this.#config.feed.url;
 
     try {
@@ -442,6 +457,13 @@ export class TrackerRoom extends DurableObject<Env> {
         },
       });
 
+      if (response.status === 401 || response.status === 403) {
+        runtime.state = 'error';
+        runtime.message = catalog?.keyEnv
+          ? `Publisher rejected the access key — check ${catalog.keyEnv}`
+          : `Publisher refused the request (HTTP ${response.status})`;
+        return;
+      }
       if (response.status === 429) {
         // Back off rather than hammering. Rate limits are never worked around.
         runtime.state = 'degraded';
@@ -495,8 +517,107 @@ export class TrackerRoom extends DurableObject<Env> {
       runtime.state = 'online';
       runtime.message = null;
     } catch (error) {
+      // A fetch error quotes the request URL, which for a keyed publisher carries the
+      // access code, and this message is broadcast to every connected client.
+      const detail = error instanceof Error ? error.message : 'unknown error';
       runtime.state = 'error';
-      runtime.message = error instanceof Error ? error.message.slice(0, 160) : 'unknown error';
+      runtime.message = (apiKey ? detail.split(apiKey).join('REDACTED') : detail).slice(0, 160);
+    }
+  }
+
+  /* --------------------------------- cameras --------------------------------- */
+
+  /**
+   * Public roadway cameras, cached in memory for the object's lifetime.
+   *
+   * Cameras are never incidents: nothing here is written to the store, clustered, or
+   * analysed. The directory changes over months, so it is fetched rarely — and a failed
+   * refresh serves the previous copy rather than emptying the overlay.
+   */
+  async #handleCameras(): Promise<Response> {
+    if (!this.#config.cameras.enabled) {
+      return json({
+        configured: false,
+        cameras: [],
+        count: 0,
+        reason:
+          'No camera access code configured. Set the WSDOT_ACCESS_CODE secret to enable ' +
+          'the public roadway-camera overlay.',
+      });
+    }
+
+    const ttlMs = this.#config.cameras.refreshMinutes * 60_000;
+    if (!this.#cameras || Date.now() - this.#camerasAtMs > ttlMs) {
+      await this.#refreshCameras();
+    }
+
+    const directory = this.#cameras;
+    if (!directory) {
+      return json({
+        configured: true,
+        cameras: [],
+        count: 0,
+        message: this.#camerasMessage ?? 'Camera directory unavailable.',
+      });
+    }
+    return json({
+      configured: true,
+      ...directory,
+      count: directory.cameras.length,
+      stale: this.#camerasFailed,
+      message: this.#camerasMessage,
+    });
+  }
+
+  async #refreshCameras(): Promise<void> {
+    const code = this.#config.cameras.accessCode;
+    const url = new URL(this.#config.cameras.url);
+    url.searchParams.set('AccessCode', code);
+
+    try {
+      const response = await fetch(url.toString(), {
+        headers: {
+          accept: 'application/json',
+          'user-agent': 'CrimeTracker/0.1 (public incident visualization)',
+        },
+      });
+      if (!response.ok) {
+        this.#camerasFailed = true;
+        this.#camerasMessage =
+          response.status === 401 || response.status === 403
+            ? `Camera directory rejected the access code (HTTP ${response.status}).`
+            : `Camera directory returned HTTP ${response.status}.`;
+        if (!this.#cameras) this.#camerasAtMs = Date.now();
+        return;
+      }
+
+      const { cameras, rejected } = mapWsdotCameras(await response.json(), {
+        region: this.#config.region,
+        imageHosts: this.#config.cameras.imageHosts,
+      });
+      this.#cameras = {
+        provider: 'WSDOT',
+        attribution: 'Washington State Department of Transportation',
+        docsUrl: 'https://wsdot.wa.gov/traffic/api/',
+        notice: CAMERA_USE_NOTICE,
+        fetchedAt: new Date().toISOString(),
+        cameras,
+      };
+      this.#camerasAtMs = Date.now();
+      this.#camerasFailed = false;
+      this.#camerasMessage =
+        rejected.total > 0
+          ? `${rejected.total} camera record(s) not shown (${rejected.inactive} inactive, ` +
+            `${rejected.position} without a usable position, ${rejected.imageHost} with an ` +
+            'image host outside the allow-list).'
+          : null;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unknown error';
+      this.#camerasFailed = true;
+      this.#camerasMessage = `Camera directory fetch failed: ${
+        code ? detail.split(code).join('REDACTED') : detail
+      }`;
+      if (!this.#cameras) this.#camerasAtMs = Date.now();
     }
   }
 

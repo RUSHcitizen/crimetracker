@@ -24,6 +24,14 @@ Status key: `[x]` done · `[~]` in progress · `[ ]` todo
 - [x] `SimulationSource`
 - [x] `PublicSafetyFeedSource` (config-driven JSON/GeoJSON poller)
 - [x] `policy.ts` — https-only, no credentialed/private feeds
+- [x] `shared/src/catalog.ts` — catalogue of real published agency datasets
+- [x] `CatalogFeedSource` — per-publisher incremental polling, precision and lag carried
+      into the HUD, publisher access keys held server-side
+- [x] Ad-hoc source specs (`socrata:` / `arcgis:` / `geojson:`) so any portal dataset can
+      be connected without a code change
+- [x] `npm run sources` / `npm run probe:source` — verify a mapping against live data
+- [x] Public roadway-camera overlay (WSDOT), off by default, kept strictly separate from
+      the incident model — positions and images only, never analysis
 
 ## Database
 - [x] SQLite schema (`sources`, `incidents`, `incident_provenance`, `extractions`, `clusters`)
@@ -73,6 +81,8 @@ Status key: `[x]` done · `[~]` in progress · `[ ]` todo
 - [x] Optional sound system, **off by default**, generated (WebAudio) tones only
 
 ## Phase 14 — Testing + performance
-- [x] Tests: normalization, coordinate validation, simulation, extraction, patterns, API, geo
+- [x] Tests: normalization, coordinate validation, simulation, extraction, patterns, API,
+      geo, the source catalogue against recorded publisher shapes, access-key handling and
+      redaction, and the camera directory
 - [x] Ring-buffered client state, selector subscriptions, GPU clustering
 - [x] `README.md`

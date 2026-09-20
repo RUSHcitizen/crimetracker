@@ -2,6 +2,17 @@
 # Non-secret settings belong in wrangler.jsonc "vars"; secrets go here locally and in
 # `wrangler secret put` for a real deployment. Nothing here reaches the browser.
 
+# --- real agency feeds -----------------------------------------------------
+# MODE=live
+# SOURCES=seattle-fire-911,nws-alerts-wa,usgs-earthquakes-wa
+#
+# WSDOT issues a free access code for its traveller-information API. One code
+# enables both the wsdot-highway-alerts source and the roadway-camera overlay.
+# Request one at https://wsdot.wa.gov/traffic/api/
+# For a deployment: npx wrangler secret put WSDOT_ACCESS_CODE
+# WSDOT_ACCESS_CODE=
+
+# --- a feed that is not in the catalogue -----------------------------------
 # FEED_URL=https://data.example.gov/resource/incidents.json
 # FEED_MAP_TIMESTAMP=reported_datetime
 # FEED_MAP_TYPE=call_type

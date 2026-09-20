@@ -54,6 +54,11 @@
     "RETENTION_HOURS": "168",
     "PATTERN_WINDOW_MINUTES": "45",
     "PATTERN_EPS_KM": "0.9",
-    "PATTERN_MIN_POINTS": "5"
+    "PATTERN_MIN_POINTS": "5",
+
+    // How often the roadway-camera directory is refetched. The overlay itself stays off
+    // until WSDOT_ACCESS_CODE is set, which is a *secret*, not a var:
+    //   npx wrangler secret put WSDOT_ACCESS_CODE
+    "CAMERAS_REFRESH_MINUTES": "360"
   }
 }

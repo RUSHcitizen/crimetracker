@@ -4,11 +4,13 @@ A public-safety **incident visualization** system: a full-screen holographic map
 Washington State with a dense technical HUD, fed by a pluggable ingestion pipeline and a
 realtime WebSocket stream.
 
-It runs on real published agency data — Seattle Fire 911 dispatch, SPD calls for service
-and SPD offence reports are catalogued and one setting away. It also ships a simulation
-engine so it is fully functional with nothing connected, and it never presents simulated
-data as real: the mode indicator reflects which sources are actually running, and live
-mode stops the simulation outright.
+It runs on real published agency data. Seattle Fire 911 dispatch, SPD calls for service,
+SPD offence reports, WSDOT statewide roadway incidents, National Weather Service warnings
+and USGS seismic events are catalogued and one setting away, and any other portal dataset
+can be connected from configuration. An optional overlay shows WSDOT's public roadway
+cameras beside the incidents. It also ships a simulation engine so it is fully functional
+with nothing connected, and it never presents simulated data as real: the mode indicator
+reflects which sources are actually running, and live mode stops the simulation outright.
 
 ```
 npm install
@@ -77,6 +79,7 @@ npm run prepare:geo # regenerate the bundled map geometry from us-atlas
 | `/` | command search |
 | `A` | analytics |
 | `P` | toggle pattern detection |
+| `C` | toggle the public roadway-camera overlay |
 | `[` / `]` | collapse the left / right panel |
 | `Esc` | close the overlay, or clear the selection |
 
@@ -133,11 +136,47 @@ npm run probe:source -- seattle-fire-911 # check the mapping against live data
 MODE=live SOURCES=seattle-fire-911,seattle-police-calls npm run dev
 ```
 
-| id | What it is | Lag | Position |
-| --- | --- | --- | --- |
-| `seattle-fire-911` | Seattle Fire 911 dispatch — live calls | minutes | street address |
-| `seattle-police-calls` | SPD calls for service | hours | **blurred by SPD to block level** |
-| `seattle-crime-reports` | SPD offence reports (NIBRS) | days, revised | area |
+| id | What it is | Lag | Position | Key |
+| --- | --- | --- | --- | --- |
+| `seattle-fire-911` | Seattle Fire 911 dispatch — live calls | minutes | street address | — |
+| `seattle-police-calls` | SPD calls for service | hours | **blurred by SPD to block level** | — |
+| `seattle-crime-reports` | SPD offence reports (NIBRS) | days, revised | area | — |
+| `wsdot-highway-alerts` | Statewide roadway incidents: collisions, closures, debris, police activity | minutes | route + milepost | `WSDOT_ACCESS_CODE` |
+| `nws-alerts-wa` | NWS warnings, watches and advisories for WA | seconds | polygon centroid, or none | — |
+| `usgs-earthquakes-wa` | Seismic events inside the WA bounding box | minutes | epicentre estimate | — |
+
+`wsdot-highway-alerts` is the broadest genuinely real-time public incident feed for
+Washington and the one worth turning on first if you want a map that moves. It needs a
+free access code from <https://wsdot.wa.gov/traffic/api/>; the same code enables the
+camera overlay below. The key is read server-side, appended per request, kept out of the
+source descriptor the browser receives, and stripped from logs and error messages.
+
+### Any other published dataset
+
+The catalogue is a convenience, not a ceiling. Rather than shipping a list of dataset ids
+that quietly rot — agencies retire and re-publish datasets constantly — any portal dataset
+can be connected from configuration:
+
+```bash
+SOURCES=socrata:data.cityoftacoma.org/abcd-1234@occurred_date
+SOURCES=arcgis:https://services.arcgis.com/<org>/ArcGIS/rest/services/<layer>/FeatureServer/0
+SOURCES=geojson:https://example.gov/incidents.geojson
+```
+
+`npm run sources` lists the Washington portals that publish public-safety data
+(`data.seattle.gov`, `data.wa.gov`, `data.kingcounty.gov`, `data.cityoftacoma.org`,
+`data.bellevuewa.gov`, `geo.wa.gov`). Find the dataset on the portal, then:
+
+```bash
+npm run probe:source -- socrata:data.cityoftacoma.org/abcd-1234
+```
+
+Column names for an ad-hoc source are resolved against a list of conventions used across
+US open-data portals, which covers most public-safety datasets on the first try. Anything
+that does not resolve is reported by the probe rather than silently dropped. Positions
+from an unmapped feed are treated as **area-level**: we do not know whether the publisher
+rounds, blurs or geocodes, and claiming anything finer would assert a precision nobody
+stated.
 
 Three things the adapter takes seriously:
 
@@ -148,8 +187,11 @@ Three things the adapter takes seriously:
   minutes ago" must not look identical on a live map, so each source carries its
   publication lag into the HUD.
 * **Polling is incremental.** Each adapter speaks its publisher's dialect for *newest
-  since X* (Socrata `$where`/`$order`, ArcGIS `where`/`orderByFields` with `outSR=4326`),
-  so a poll fetches new records rather than re-downloading the dataset. `429` backs off.
+  since X* (Socrata `$where`/`$order`, ArcGIS `where`/`orderByFields` with `outSR=4326`,
+  USGS `starttime`), so a poll fetches new records rather than re-downloading the
+  dataset. Where a publisher documents no such parameter — WSDOT does not — the dedup set
+  does the work instead. `429` backs off; `401`/`403` says which variable to check rather
+  than retrying into a wall.
 
 Column names drift — publishers rename fields without notice. Each mapping therefore
 lists candidate paths, and `npm run probe:source` prints which one actually resolved
@@ -157,6 +199,34 @@ against a live record plus the incident that would be stored. Run it before trus
 feed.
 
 Check each dataset's own terms and rate limits before pointing a continuous poller at it.
+
+### Public roadway cameras
+
+An optional overlay of still images that WSDOT publishes for road conditions, shown beside
+incidents so you can see what the weather and traffic near a reported event look like. Off
+unless `WSDOT_ACCESS_CODE` is set; toggle with `C` or the `CAM` control.
+
+The scope is deliberate, and it is the whole feature:
+
+* Positions and image URLs only. The images are loaded by the viewer's browser straight
+  from the agency, exactly as on the agency's own traveller-information site. Nothing is
+  proxied, recorded or re-hosted here.
+* Cameras are **not incidents**. They are held in a separate collection, never written to
+  the incident store, never counted in the statistics, and never seen by the pattern
+  detector. They are drawn as small square teal markers so they cannot be mistaken at a
+  glance for a report that something happened.
+* The use notice ships with the picture — rendered in the card, not buried in these docs.
+* The browser is told to fetch these URLs, so the hosts it can be pointed at are an
+  allow-list (`CAMERA_IMAGE_HOSTS`), not something an upstream record decides. Cameras
+  whose image lives elsewhere, or that are outside the region, or that the agency has
+  retired, are dropped and *counted* — the tally appears under the source list, because an
+  overlay that silently loses half its cameras looks identical to one that is simply
+  sparse.
+* The directory is fetched rarely (`CAMERAS_REFRESH_MINUTES`, default 6 hours): the list
+  of cameras an agency operates changes over months. A failed refresh serves the previous
+  copy marked stale rather than emptying the overlay.
+
+What this is **not** is any form of camera analysis. See section 11.
 
 ### Generic feed
 
@@ -391,6 +461,7 @@ thousands of incidents cost a handful of layers rather than thousands of DOM nod
 | `GET /api/stats` | aggregates and the activity timeline |
 | `GET /api/patterns` | detected concentrations, with a standing disclaimer |
 | `GET /api/sources` | adapter health |
+| `GET /api/cameras` | public roadway-camera directory, with attribution and use notice |
 | `POST /api/mode` | switch live / simulation |
 | `WS /ws` | snapshot on connect, then batched deltas |
 
@@ -400,16 +471,22 @@ thousands of incidents cost a handful of layers rather than thousands of DOM nod
 npm test
 ```
 
-231 tests covering incident normalization, coordinate validation and rejection, timestamp
+294 tests covering incident normalization, coordinate validation and rejection, timestamp
 parsing, provenance rules, the simulation generator, the heuristic and OpenAI-compatible
 extractors, source policy and feed mapping, the audio buffer, pattern detection
 (including an equivalence check against a brute-force reference implementation and a
 performance bound), the repository and statistics, mode switching (that a stopped source really produces
 nothing), WebSocket origin enforcement, the realtime hub's batching, a live WebSocket
 round-trip, the REST API including its input-validation behaviour, and the Worker's
-configuration loader, the real-source catalogue (mapping against recorded response shapes,
-incremental poll URLs, rate-limit back-off, and that no catalogued source ever claims
-exact positions), and the rule that a LIVE deployment never backfills simulated history.
+configuration loader, the real-source catalogue (mapping against recorded response shapes
+for every publisher, incremental poll URLs in each dialect, rate-limit back-off, polygon
+centroids, ASP.NET timestamps, and that no catalogued source ever claims exact positions),
+ad-hoc source specs and their rejection rules, publisher access keys (that only declared
+variables are read, that a keyed source without its key is skipped rather than started,
+and that the key never reaches the descriptor, the public config, a log or an error
+message), the camera directory (host allow-list, region filter, retired cameras, cache
+and stale-on-failure behaviour), and the rule that a LIVE deployment never backfills
+simulated history.
 
 ## 10. Security notes
 
@@ -423,7 +500,15 @@ exact positions), and the rule that a LIVE deployment never backfills simulated 
   and read the stream. Requests with no `Origin` header (curl, tests, native clients) are
   allowed.
 * No API key, base URL or credential is ever sent to the browser; `GET /api/config`
-  returns booleans, not endpoints.
+  returns booleans, not endpoints. A publisher access key is appended per request, never
+  stored in the catalogue, never placed in the source descriptor that is broadcast over
+  the WebSocket, and stripped from any log line or error message — network errors quote
+  the full request URL, so this is not theoretical.
+* Only the key variables the configured sources actually declare are read from the
+  environment, so an unrelated secret sitting beside them is never collected.
+* Camera image URLs are checked against a host allow-list before the browser is told to
+  load them. What hosts a viewer's browser can be pointed at is not a decision an upstream
+  record gets to make.
 * Sound is off by default and, when enabled, uses WebAudio-generated tones only — there
   are no audio assets in this project.
 
@@ -434,12 +519,17 @@ Some things this project deliberately does not do, and will not be extended to d
 * **Decode encrypted radio.** No workaround, no setting, no exception.
 * **Analyse camera or CCTV footage to infer crimes.** Two separate problems. The feeds
   usually described as "open cameras" are unsecured private devices whose owners never
-  intended public access, and reaching them is unauthorised access. And inferring
-  criminality about identifiable people from video produces accusations, not observations
-  — the opposite of a system built to keep source fact and inference visibly apart.
-  Public *traffic* cameras published by an agency for public display are a different
-  thing and could reasonably be added as a situational overlay, with no person-level
-  analysis.
+  intended public access, and reaching them is unauthorised access however easy it is.
+  And inferring criminality about identifiable people from video produces accusations,
+  not observations — the opposite of a system built to keep source fact and inference
+  visibly apart.
+
+  The roadway-camera overlay in section 4 is the legitimate subset and the whole of it:
+  stills an agency publishes for public display of road conditions, shown as-is. There is
+  no path from `shared/src/cameras.ts` to an image analyser, no annotation drawn over a
+  frame, and no description generated from one. A still shown as published is an
+  observation; the same still with a model's guess written across it is an accusation
+  about whoever happens to be in shot.
 * **Identify or track individuals.** Nothing here is keyed to a person, and the incident
   model has no field for one.
 * **Predict crime.** Pattern Detection describes concentrations in reports already
@@ -449,6 +539,14 @@ Some things this project deliberately does not do, and will not be extended to d
 
 Boundary geometry: US Census Bureau cartographic boundary files (public domain), via the
 `us-atlas` package.
+
+Incident data, where configured, is published by and belongs to the originating agency:
+City of Seattle Open Data (Seattle Fire Department, Seattle Police Department), the
+Washington State Department of Transportation, NOAA / the National Weather Service, and
+the U.S. Geological Survey Earthquake Hazards Program. Each catalogue entry carries the
+attribution the publisher asks for and it is shown in the source panel. Roadway camera
+imagery remains WSDOT's and is displayed from their servers, not copied. Check each
+dataset's own terms before running a continuous poller against it.
 
 Incident data, when live sources are enabled, comes from the publishing agency and carries
 its attribution in the source panel — for the catalogued sources, the City of Seattle Open

@@ -7,12 +7,15 @@ import {
   type IncidentQuery,
 } from '@crimetracker/shared';
 import { publicConfig, type Config } from '../config.js';
+import type { WsdotCameraDirectory } from '../cameras/directory.js';
 import type { IngestionPipeline } from '../pipeline/ingest.js';
 
 export interface RouteDeps {
   readonly config: Config;
   readonly repository: IncidentRepository;
   readonly pipeline: IngestionPipeline;
+  /** Absent when no camera access code is configured. */
+  readonly cameras?: WsdotCameraDirectory | null;
 }
 
 /**
@@ -20,7 +23,7 @@ export interface RouteDeps {
  * repository, so a malformed or hostile request produces a 400 rather than a query.
  */
 export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Promise<void> {
-  const { config, repository, pipeline } = deps;
+  const { config, repository, pipeline, cameras } = deps;
 
   app.get('/api/health', async () => ({
     status: 'ok',
@@ -97,6 +100,34 @@ export async function registerRoutes(app: FastifyInstance, deps: RouteDeps): Pro
       return reply.status(409).send({ error: 'mode-unavailable', reason: result.reason, mode: pipeline.mode });
     }
     return { mode: pipeline.mode };
+  });
+
+  /**
+   * Public roadway cameras.
+   *
+   * A separate resource from incidents on purpose: these are conditions imagery, not
+   * reports of events, and nothing here ever joins the incident store. The response
+   * carries the agency's attribution and the use notice the client is required to show.
+   */
+  app.get('/api/cameras', async () => {
+    if (!cameras) {
+      return {
+        configured: false,
+        cameras: [],
+        count: 0,
+        reason:
+          'No camera access code configured. Set WSDOT_ACCESS_CODE to enable the public ' +
+          'roadway-camera overlay.',
+      };
+    }
+    const listing = await cameras.list();
+    return {
+      configured: true,
+      ...listing.directory,
+      count: listing.directory.cameras.length,
+      stale: listing.stale,
+      message: listing.message,
+    };
   });
 
   app.get('/api/search', async (request, reply) => {

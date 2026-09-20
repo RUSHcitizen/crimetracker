@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type {
   AppMode,
+  CameraSite,
   Incident,
   IncidentType,
   PatternCluster,
@@ -8,6 +9,7 @@ import type {
   SourceStatus,
   Stats,
 } from '@crimetracker/shared';
+import { fetchCameras } from '../lib/api.js';
 
 /**
  * Client state.
@@ -48,8 +50,12 @@ export interface UiState {
   statsOpen: boolean;
   searchOpen: boolean;
   patternsVisible: boolean;
+  /** Public roadway-camera overlay. Off by default — it is context, not incident data. */
+  camerasVisible: boolean;
   soundEnabled: boolean;
 }
+
+export type CameraState = 'idle' | 'loading' | 'ready' | 'unavailable';
 
 interface TrackerState {
   /* data */
@@ -73,9 +79,26 @@ interface TrackerState {
   focusedPatternId: string | null;
   recentArrivals: Map<string, number>;
 
+  /*
+   * Public roadway cameras.
+   *
+   * Held apart from incidents on purpose: a camera is a view of a road, not a report of
+   * an event. Keeping the two in separate collections means a camera can never be
+   * counted in statistics, clustered by the pattern detector, or mistaken for a record
+   * of something that happened.
+   */
+  cameras: CameraSite[];
+  cameraState: CameraState;
+  cameraMessage: string | null;
+  cameraAttribution: string | null;
+  cameraNotice: string | null;
+  selectedCameraId: string | null;
+
   /* view */
   filters: Filters;
   viewportBounds: [number, number, number, number] | null;
+  /** Current map zoom, so the HUD can explain zoom-gated layers. */
+  viewportZoom: number;
   ui: UiState;
 
   /* actions */
@@ -88,9 +111,12 @@ interface TrackerState {
   toggleSource: (id: string) => void;
   resetFilters: () => void;
   setViewportBounds: (bounds: [number, number, number, number] | null) => void;
+  setViewportZoom: (zoom: number) => void;
   setUi: (patch: Partial<UiState>) => void;
   setMode: (mode: AppMode) => void;
   pruneArrivals: () => void;
+  loadCameras: () => Promise<void>;
+  selectCamera: (id: string | null) => void;
 }
 
 export const DEFAULT_FILTERS: Filters = {
@@ -123,8 +149,16 @@ export const useTracker = create<TrackerState>((set, get) => ({
   focusedPatternId: null,
   recentArrivals: new Map(),
 
+  cameras: [],
+  cameraState: 'idle',
+  cameraMessage: null,
+  cameraAttribution: null,
+  cameraNotice: null,
+  selectedCameraId: null,
+
   filters: DEFAULT_FILTERS,
   viewportBounds: null,
+  viewportZoom: 0,
   ui: {
     // On a phone the panels start collapsed so the map owns the screen.
     leftOpen: !isNarrow(),
@@ -133,6 +167,7 @@ export const useTracker = create<TrackerState>((set, get) => ({
     statsOpen: false,
     searchOpen: false,
     patternsVisible: true,
+    camerasVisible: false,
     soundEnabled: false,
   },
 
@@ -241,9 +276,45 @@ export const useTracker = create<TrackerState>((set, get) => ({
 
   setViewportBounds: (viewportBounds) => set({ viewportBounds }),
 
+  setViewportZoom: (viewportZoom) => set({ viewportZoom }),
+
   setUi: (patch) => set((state) => ({ ui: { ...state.ui, ...patch } })),
 
   setMode: (mode) => set({ mode }),
+
+  /**
+   * Load the camera directory, once.
+   *
+   * Nothing is requested until the operator turns the overlay on, and the result is kept
+   * for the session — the list of cameras an agency operates changes over months, not
+   * minutes, so re-fetching it on every toggle would be pure noise against their API.
+   */
+  loadCameras: async () => {
+    const state = get();
+    if (state.cameraState === 'loading' || state.cameraState === 'ready') return;
+    set({ cameraState: 'loading', cameraMessage: null });
+    try {
+      const response = await fetchCameras();
+      if (!response.configured) {
+        set({
+          cameraState: 'unavailable',
+          cameraMessage: response.reason ?? 'Camera overlay is not configured on this server.',
+        });
+        return;
+      }
+      set({
+        cameras: [...response.cameras],
+        cameraState: 'ready',
+        cameraAttribution: response.attribution ?? null,
+        cameraNotice: response.notice ?? null,
+        cameraMessage: response.message ?? null,
+      });
+    } catch {
+      set({ cameraState: 'unavailable', cameraMessage: 'Could not reach the camera directory.' });
+    }
+  },
+
+  selectCamera: (selectedCameraId) => set({ selectedCameraId }),
 
   pruneArrivals: () => {
     const arrivals = get().recentArrivals;

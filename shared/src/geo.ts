@@ -161,3 +161,78 @@ export function formatKm(km: number): string {
   if (km < 1) return `${Math.round(km * 1000)} m`;
   return `${km.toFixed(km < 10 ? 1 : 0)} km`;
 }
+
+/**
+ * Centroid of a GeoJSON Polygon or MultiPolygon coordinate array.
+ *
+ * Several public-safety feeds describe an *area* rather than a point — a National Weather
+ * Service warning covers a polygon, not an address. Reducing that polygon to its centre of
+ * area gives the map something to plot while the caller keeps the precision honest by
+ * marking the result `area`, never `exact`.
+ *
+ * Uses the shoelace formula on the outer ring (the largest ring of a MultiPolygon), and
+ * falls back to the mean vertex for degenerate rings where the signed area is zero.
+ * Returns `null` for anything that is not a usable ring — a shape we cannot read becomes
+ * no position at all, never a guess.
+ */
+export function ringCentroid(coordinates: unknown): Coordinates | null {
+  const ring = outerRing(coordinates);
+  if (!ring || ring.length < 3) {
+    // A one- or two-point "ring" still has a defensible mean.
+    return ring && ring.length > 0 ? meanOf(ring) : null;
+  }
+
+  let twiceArea = 0;
+  let x = 0;
+  let y = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i, i += 1) {
+    const a = ring[j]!;
+    const b = ring[i]!;
+    const cross = a[0] * b[1] - b[0] * a[1];
+    twiceArea += cross;
+    x += (a[0] + b[0]) * cross;
+    y += (a[1] + b[1]) * cross;
+  }
+
+  if (Math.abs(twiceArea) < 1e-12) return meanOf(ring);
+
+  const factor = 1 / (3 * twiceArea);
+  const lon = x * factor;
+  const lat = y * factor;
+  return isFiniteNumber(lat) && isFiniteNumber(lon) ? { lat, lon } : null;
+}
+
+/** The outer ring worth measuring: for a MultiPolygon, the one with the most vertices. */
+function outerRing(coordinates: unknown): [number, number][] | null {
+  if (!Array.isArray(coordinates) || coordinates.length === 0) return null;
+
+  // Polygon: [ring, ...holes]; MultiPolygon: [[ring, ...holes], ...].
+  const first = coordinates[0];
+  if (Array.isArray(first) && Array.isArray(first[0]) && Array.isArray(first[0][0])) {
+    let best: [number, number][] | null = null;
+    for (const polygon of coordinates as unknown[]) {
+      const candidate = outerRing(polygon);
+      if (candidate && (!best || candidate.length > best.length)) best = candidate;
+    }
+    return best;
+  }
+
+  const ring = Array.isArray(first) ? first : coordinates;
+  const points: [number, number][] = [];
+  for (const point of ring as unknown[]) {
+    if (!Array.isArray(point)) continue;
+    const [lon, lat] = point as unknown[];
+    if (isFiniteNumber(lon) && isFiniteNumber(lat)) points.push([lon, lat]);
+  }
+  return points.length > 0 ? points : null;
+}
+
+function meanOf(ring: readonly [number, number][]): Coordinates | null {
+  let lon = 0;
+  let lat = 0;
+  for (const [x, y] of ring) {
+    lon += x;
+    lat += y;
+  }
+  return ring.length > 0 ? { lat: lat / ring.length, lon: lon / ring.length } : null;
+}

@@ -188,8 +188,17 @@ export function parseTimestamp(
       const n = Number(trimmed);
       ms = n < 1e11 ? n * 1000 : n;
     } else {
-      const parsed = Date.parse(trimmed);
-      ms = Number.isNaN(parsed) ? null : parsed;
+      // Microsoft's ASP.NET JSON date, e.g. `/Date(1699999999000-0800)/`. WSDOT's
+      // traveler-information API still emits it, and `Date.parse` cannot read it. The
+      // number is already epoch UTC milliseconds; the trailing offset is only the
+      // publisher's local zone, so it must not be applied a second time.
+      const dotNet = /^\/Date\((-?\d+)(?:[+-]\d{4})?\)\/$/.exec(trimmed);
+      if (dotNet) {
+        ms = Number(dotNet[1]);
+      } else {
+        const parsed = Date.parse(trimmed);
+        ms = Number.isNaN(parsed) ? null : parsed;
+      }
     }
   } else if (input instanceof Date) {
     ms = input.getTime();

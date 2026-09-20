@@ -13,3 +13,4 @@ export * from './sim/places.js';
 export * from './sim/generator.js';
 export * from './feed.js';
 export * from './catalog.js';
+export * from './cameras.js';

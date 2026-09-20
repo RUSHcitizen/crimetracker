@@ -5,6 +5,7 @@ import { LeftPanel } from './hud/LeftPanel.js';
 import { RightPanel } from './hud/RightPanel.js';
 import { BottomStream } from './hud/BottomStream.js';
 import { PatternOverlay, PatternToggle } from './hud/PatternOverlay.js';
+import { CameraCard, CameraNotice, CameraToggle } from './hud/CameraOverlay.js';
 import { StatsView } from './hud/StatsView.js';
 import { CommandSearch } from './hud/CommandSearch.js';
 import { RealtimeClient } from './lib/realtime.js';
@@ -52,6 +53,7 @@ export default function App() {
         const state = useTracker.getState();
         if (state.ui.searchOpen) state.setUi({ searchOpen: false });
         else if (state.ui.statsOpen) state.setUi({ statsOpen: false });
+        else if (state.selectedCameraId) state.selectCamera(null);
         else state.select(null);
         return;
       }
@@ -70,6 +72,14 @@ export default function App() {
             .getState()
             .setUi({ patternsVisible: !useTracker.getState().ui.patternsVisible });
           break;
+        case 'c': {
+          const state = useTracker.getState();
+          const next = !state.ui.camerasVisible;
+          state.setUi({ camerasVisible: next });
+          if (next) void state.loadCameras();
+          else state.selectCamera(null);
+          break;
+        }
         case '[':
           useTracker.getState().setUi({ leftOpen: !useTracker.getState().ui.leftOpen });
           break;
@@ -108,6 +118,7 @@ export default function App() {
         <div className="hud__center">
           <PatternOverlay />
           <PatternToggle />
+          <CameraNotice />
           <div className="hud__centerfoot">
             <MapControls />
             <ModeBanner mode={mode} />
@@ -133,6 +144,7 @@ export default function App() {
         </div>
       </div>
 
+      <CameraCard />
       <StatsView />
       <CommandSearch />
 
@@ -174,6 +186,7 @@ function MapControls() {
       <button type="button" className="mapctl__btn" onClick={resetFilters} title="Reset all filters">
         ⟲
       </button>
+      <CameraToggle />
     </div>
   );
 }

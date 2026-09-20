@@ -208,6 +208,7 @@ export function LeftPanel() {
               </button>
             );
           })}
+          <CameraSourceRow />
           <p className="sourcenote micro">
             Map geometry: US Census Bureau cartographic boundaries (public domain), bundled
             locally. No third-party basemap or tile server is used.
@@ -271,6 +272,57 @@ function IncidentRow({
         </span>
       </div>
     </button>
+  );
+}
+
+/**
+ * The camera overlay, listed beside the incident sources but never as one.
+ *
+ * It sits in this section because this is where someone looks to see what the system is
+ * connected to. It is drawn differently and labelled `overlay` because a camera is a view
+ * of a road, not a report of an event — it contributes nothing to the incident count, the
+ * statistics or the pattern detector, and the list should not imply otherwise.
+ */
+function CameraSourceRow() {
+  const camerasVisible = useTracker((s) => s.ui.camerasVisible);
+  const cameraState = useTracker((s) => s.cameraState);
+  const cameras = useTracker((s) => s.cameras);
+  const message = useTracker((s) => s.cameraMessage);
+  const attribution = useTracker((s) => s.cameraAttribution);
+  const setUi = useTracker((s) => s.setUi);
+  const loadCameras = useTracker((s) => s.loadCameras);
+  const selectCamera = useTracker((s) => s.selectCamera);
+
+  const color =
+    cameraState === 'unavailable' ? '#ffa23a' : camerasVisible ? '#6fe3d0' : '#4e6373';
+
+  return (
+    <>
+      <button
+        type="button"
+        className="sourcerow"
+        aria-pressed={camerasVisible}
+        onClick={() => {
+          const next = !camerasVisible;
+          setUi({ camerasVisible: next });
+          if (next) void loadCameras();
+          else selectCamera(null);
+        }}
+        title={
+          attribution
+            ? `Public roadway cameras — ${attribution}. Conditions imagery only; not incident data.`
+            : 'Public roadway cameras. Conditions imagery only; not incident data.'
+        }
+      >
+        <span className="dot" style={{ color }} />
+        <span className="sourcerow__name truncate" style={{ opacity: camerasVisible ? 1 : 0.45 }}>
+          Roadway Cameras
+        </span>
+        <span className="sourcerow__kind micro">overlay</span>
+        <span className="sourcerow__count mono">{cameras.length}</span>
+      </button>
+      {camerasVisible && message && <p className="sourcenote micro">{message}</p>}
+    </>
   );
 }
 

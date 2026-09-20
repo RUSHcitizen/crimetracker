@@ -48,6 +48,9 @@
   --violet: #b98cff;
   --violet-dim: #6d4fa8;
   --green: #4ce0a8;
+  /* Roadway cameras: a fifth accent, kept clearly apart from the severity ramp and from
+     violet. Camera imagery is context, never a report and never an inference. */
+  --cam: #6fe3d0;
   --slate: #6f8698;
 
   /* --- severity ramp ----------------------------------------------------- */

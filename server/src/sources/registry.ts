@@ -54,11 +54,23 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
       );
       continue;
     }
+    // A publisher that issues an access key cannot be polled without it. Skipping with a
+    // warning beats starting a source that will only ever return 401.
+    const apiKey = catalogSource.keyEnv ? config.sourceKeys[catalogSource.keyEnv] : undefined;
+    if (catalogSource.keyEnv && !apiKey) {
+      warnings.push(
+        `${catalogSource.id}: requires ${catalogSource.keyEnv}. Request a free key at ` +
+          `${catalogSource.docsUrl} and set it in the environment.`,
+      );
+      continue;
+    }
+
     try {
       sources.push(
         new CatalogFeedSource({
           source: catalogSource,
           pollSeconds: config.feed.pollSeconds,
+          apiKey: apiKey ?? null,
         }),
       );
     } catch (error) {
@@ -121,8 +133,9 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
 
   if (!sources.some((source) => modeOfSource(source) === 'live')) {
     warnings.push(
-      'No live source is configured, so LIVE mode is unavailable. Set FEED_URL (and see ' +
-        '.env.example) to connect a publicly accessible feed.',
+      'No live source is configured, so LIVE mode is unavailable. Set SOURCES to one or ' +
+        'more catalogued feeds (run `npm run sources` to list them), or FEED_URL for an ' +
+        'endpoint that is not catalogued. See .env.example.',
     );
   }
 

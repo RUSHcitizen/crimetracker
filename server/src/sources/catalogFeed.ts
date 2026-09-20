@@ -17,6 +17,14 @@ export interface CatalogFeedOptions {
   readonly pageSize?: number;
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof fetch;
+  /**
+   * Access key for publishers that issue one (WSDOT, for example).
+   *
+   * Held here and appended to each request URL, never written into the catalogue, never
+   * placed in `descriptor.url`, and redacted out of anything logged — the descriptor is
+   * broadcast to every connected browser.
+   */
+  readonly apiKey?: string | null;
 }
 
 /**
@@ -95,6 +103,7 @@ export class CatalogFeedSource implements DataSource {
       const url = buildPollUrl(this.#catalog, {
         since: this.#watermark,
         limit: this.#options.pageSize ?? 200,
+        apiKey: this.#options.apiKey ?? null,
       });
 
       const response = await this.#fetch(url, {
@@ -105,6 +114,15 @@ export class CatalogFeedSource implements DataSource {
         },
       });
 
+      if (response.status === 401 || response.status === 403) {
+        // A key problem, not a transient one: say so rather than retrying into a wall.
+        const reason = this.#catalog.keyEnv
+          ? `Publisher rejected the access key (HTTP ${response.status}) — check ${this.#catalog.keyEnv}`
+          : `Publisher refused the request (HTTP ${response.status})`;
+        this.#tracker.setState('error', reason);
+        ctx.setState('error', reason);
+        return;
+      }
       if (response.status === 429) {
         // Back off. A published rate limit is a rule, not an obstacle.
         this.#tracker.setState('degraded', 'Rate limited by publisher — backing off');
@@ -162,12 +180,22 @@ export class CatalogFeedSource implements DataSource {
       this.#tracker.setState('online', summary);
       ctx.setState('online', summary);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
+      // Fetch failures quote the request URL, which for a keyed publisher carries the
+      // access code. This message reaches both the log and every connected browser, so
+      // the key is stripped before either sees it.
+      const message = this.#redact(error instanceof Error ? error.message : 'unknown error');
       this.#tracker.setState('error', message);
       ctx.setState('error', message);
       ctx.log('warn', `${this.#catalog.id} poll failed: ${message}`);
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  /** Remove the access key from any text on its way to a log or a client. */
+  #redact(text: string): string {
+    const key = this.#options.apiKey;
+    if (!key) return text;
+    return text.split(key).join('REDACTED');
   }
 }

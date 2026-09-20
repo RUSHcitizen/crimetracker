@@ -1,4 +1,4 @@
-import type { Incident, IncidentType, AppMode } from '@crimetracker/shared';
+import type { CameraSite, Incident, IncidentType, AppMode } from '@crimetracker/shared';
 
 /**
  * REST helpers. Everything is same-origin (the dev server proxies to the API), so no
@@ -80,4 +80,29 @@ export async function setServerMode(mode: AppMode): Promise<ModeChange> {
   } catch {
     return { ok: false, reason: 'Could not reach the server.', mode: null };
   }
+}
+
+export interface CameraResponse {
+  readonly configured: boolean;
+  readonly cameras: readonly CameraSite[];
+  readonly count: number;
+  readonly provider?: string;
+  readonly attribution?: string;
+  readonly docsUrl?: string;
+  readonly notice?: string;
+  readonly fetchedAt?: string;
+  readonly stale?: boolean;
+  readonly message?: string | null;
+  readonly reason?: string;
+}
+
+/**
+ * Fetch the public roadway-camera directory.
+ *
+ * Positions and image URLs only. The images themselves are loaded by the browser straight
+ * from the agency when a camera is opened, so nothing is proxied or cached here — and
+ * nothing is fetched at all until the operator turns the overlay on.
+ */
+export async function fetchCameras(signal?: AbortSignal): Promise<CameraResponse> {
+  return getJson<CameraResponse>('/api/cameras', signal);
 }

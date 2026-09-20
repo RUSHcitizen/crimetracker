@@ -6,6 +6,7 @@ import { loadConfig } from './config.js';
 import { openDatabase, resolveDatabasePath } from './db/database.js';
 import { createExtractor } from './extraction/index.js';
 import { registerRoutes } from './http/routes.js';
+import { WsdotCameraDirectory } from './cameras/directory.js';
 import { registerWebsocket } from './http/ws.js';
 import { RealtimeHub } from './pipeline/hub.js';
 import { IngestionPipeline } from './pipeline/ingest.js';
@@ -71,7 +72,23 @@ async function main(): Promise<void> {
     },
   });
 
-  await registerRoutes(app, { config, repository, pipeline });
+  /*
+   * The camera overlay exists only when the operator supplied the agency's free access
+   * code. Building it here rather than inside the route keeps the directory cached for
+   * the process lifetime instead of refetching per request.
+   */
+  const cameras = config.cameras.enabled
+    ? new WsdotCameraDirectory({
+        url: config.cameras.url,
+        accessCode: config.cameras.accessCode,
+        region: config.region,
+        imageHosts: config.cameras.imageHosts,
+        refreshMinutes: config.cameras.refreshMinutes,
+      })
+    : null;
+  if (cameras) app.log.info('public roadway camera overlay enabled (WSDOT)');
+
+  await registerRoutes(app, { config, repository, pipeline, cameras });
   await registerWebsocket(app, { repository, pipeline, hub });
 
   /*

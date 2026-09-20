@@ -7,6 +7,12 @@ import { useFilteredIncidents } from '../state/selectors.js';
 import { WA_PLACES } from '../lib/places.js';
 import { buildMapStyle, INITIAL_VIEW, MAX_BOUNDS } from './style.js';
 import {
+  camerasToGeoJson,
+  installCameraLayers,
+  LAYER_CAMERA,
+  SRC_CAMERAS,
+} from './cameraLayers.js';
+import {
   incidentsToGeoJson,
   installIncidentLayers,
   LAYER_CLUSTER_RING,
@@ -82,11 +88,13 @@ export function MapCanvas() {
 
     map.on('load', () => {
       installIncidentLayers(map);
+      installCameraLayers(map);
       placePool.current = buildPlaceLabels(placesRef.current);
       readyRef.current = true;
       // Push whatever the store already holds.
       pushIncidents(map, incidentsRef.current);
       pushPatterns(map);
+      pushCameras(map);
       publishBounds(map);
       positionPlaceLabels(map, placePool);
     });
@@ -115,6 +123,12 @@ export function MapCanvas() {
       });
     };
 
+    const onCameraClick = (event: MapMouseEvent) => {
+      const features = map.queryRenderedFeatures(event.point, { layers: [LAYER_CAMERA] });
+      const id = features[0]?.properties?.id;
+      if (typeof id === 'string') useTracker.getState().selectCamera(id);
+    };
+
     const setPointer = () => {
       map.getCanvas().style.cursor = 'pointer';
     };
@@ -123,6 +137,9 @@ export function MapCanvas() {
     };
 
     map.on('click', LAYER_POINT, onPointClick);
+    map.on('click', LAYER_CAMERA, onCameraClick);
+    map.on('mouseenter', LAYER_CAMERA, setPointer);
+    map.on('mouseleave', LAYER_CAMERA, clearPointer);
     map.on('click', LAYER_CLUSTER_RING, onClusterClick);
     map.on('mouseenter', LAYER_POINT, setPointer);
     map.on('mouseleave', LAYER_POINT, clearPointer);
@@ -152,9 +169,12 @@ export function MapCanvas() {
     // Clicking empty map clears the selection.
     map.on('click', (event) => {
       const hits = map.queryRenderedFeatures(event.point, {
-        layers: [LAYER_POINT, LAYER_CLUSTER_RING],
+        layers: [LAYER_POINT, LAYER_CLUSTER_RING, LAYER_CAMERA],
       });
-      if (hits.length === 0) useTracker.getState().select(null);
+      if (hits.length === 0) {
+        useTracker.getState().select(null);
+        useTracker.getState().selectCamera(null);
+      }
     });
 
     return () => {
@@ -179,6 +199,26 @@ export function MapCanvas() {
       if (state.patterns !== prev.patterns || state.ui.patternsVisible !== prev.ui.patternsVisible) {
         pushPatterns(map);
       }
+      if (state.cameras !== prev.cameras || state.ui.camerasVisible !== prev.ui.camerasVisible) {
+        pushCameras(map);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  /* ------------------ camera selection: frame the site ------------------ */
+  useEffect(() => {
+    const unsubscribe = useTracker.subscribe((state, prev) => {
+      if (state.selectedCameraId === prev.selectedCameraId || !state.selectedCameraId) return;
+      const map = mapRef.current;
+      const camera = state.cameras.find((c) => c.id === state.selectedCameraId);
+      if (!map || !readyRef.current || !camera) return;
+      map.easeTo({
+        center: [camera.coordinates.lon, camera.coordinates.lat],
+        zoom: Math.max(map.getZoom(), 11),
+        duration: 800,
+        essential: true,
+      });
     });
     return unsubscribe;
   }, []);
@@ -369,16 +409,25 @@ function pushPatterns(map: MapLibreMap): void {
   );
 }
 
+function pushCameras(map: MapLibreMap): void {
+  const state = useTracker.getState();
+  setSourceData(
+    map,
+    SRC_CAMERAS,
+    state.ui.camerasVisible ? camerasToGeoJson(state.cameras) : EMPTY,
+  );
+}
+
 function publishBounds(map: MapLibreMap): void {
   const bounds = map.getBounds();
-  useTracker
-    .getState()
-    .setViewportBounds([
-      bounds.getWest(),
-      bounds.getSouth(),
-      bounds.getEast(),
-      bounds.getNorth(),
-    ]);
+  const state = useTracker.getState();
+  state.setViewportBounds([
+    bounds.getWest(),
+    bounds.getSouth(),
+    bounds.getEast(),
+    bounds.getNorth(),
+  ]);
+  state.setViewportZoom(map.getZoom());
 }
 
 /**

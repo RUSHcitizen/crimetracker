@@ -318,3 +318,197 @@ describe('CatalogFeedSource', () => {
     expect(feed.descriptor.kind).toBe('public-feed');
   });
 });
+
+describe('sources that require an access key', () => {
+  const wsdot = findCatalogSource('wsdot-highway-alerts')!;
+  const alert = (over: Record<string, unknown> = {}) => ({
+    AlertID: 700001,
+    County: 'Snohomish',
+    EventCategory: 'Collision',
+    HeadlineDescription: 'Collision blocking the left lane of northbound I-405.',
+    StartTime: `/Date(${Date.now() - 6 * 60_000}-0800)/`,
+    StartRoadwayLocation: {
+      Description: 'I-405 northbound at milepost 23',
+      Direction: 'N',
+      Latitude: 47.7623,
+      Longitude: -122.2054,
+      MilePost: 23,
+      RoadName: '405',
+    },
+    ...over,
+  });
+
+  it('sends the key to the publisher and keeps it out of the descriptor', async () => {
+    let requested = '';
+    const source = new CatalogFeedSource({
+      source: wsdot,
+      pollSeconds: 3600,
+      apiKey: 'SECRET-123',
+      fetchImpl: (async (input: RequestInfo | URL) => {
+        requested = String(input);
+        return new Response(JSON.stringify([alert()]), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    const { ctx, emitted } = testContext();
+    await source.start(ctx);
+    await source.stop();
+
+    expect(new URL(requested).searchParams.get('AccessCode')).toBe('SECRET-123');
+    expect(emitted).toHaveLength(1);
+    // The descriptor is broadcast to every connected browser.
+    expect(source.descriptor.url).not.toContain('SECRET-123');
+    expect(JSON.stringify(source.status())).not.toContain('SECRET-123');
+  });
+
+  it('says which variable to check when the publisher rejects the key', async () => {
+    const source = new CatalogFeedSource({
+      source: wsdot,
+      pollSeconds: 3600,
+      apiKey: 'WRONG',
+      fetchImpl: (async () => new Response('denied', { status: 401 })) as typeof fetch,
+    });
+    const { ctx } = testContext();
+    await source.start(ctx);
+    // Read before stopping: a stopped source reports no current message.
+    const status = source.status();
+    await source.stop();
+
+    expect(status.state).toBe('error');
+    expect(status.message).toContain('WSDOT_ACCESS_CODE');
+  });
+
+  it('strips the key out of a fetch error before it reaches a client', async () => {
+    const source = new CatalogFeedSource({
+      source: wsdot,
+      pollSeconds: 3600,
+      apiKey: 'SECRET-123',
+      fetchImpl: (async () => {
+        // Node quotes the full request URL in network errors.
+        throw new Error('request to https://wsdot.example/a?AccessCode=SECRET-123 failed');
+      }) as typeof fetch,
+    });
+    const { ctx, states } = testContext();
+    await source.start(ctx);
+    const status = source.status();
+    await source.stop();
+
+    expect(states).toContain('error');
+    expect(status.message).not.toContain('SECRET-123');
+    expect(status.message).toContain('REDACTED');
+  });
+
+  it('stamps milepost precision rather than an exact point', async () => {
+    const source = new CatalogFeedSource({
+      source: wsdot,
+      pollSeconds: 3600,
+      apiKey: 'SECRET-123',
+      fetchImpl: (async () =>
+        new Response(JSON.stringify([alert()]), { status: 200 })) as typeof fetch,
+    });
+    const { ctx, emitted } = testContext();
+    await source.start(ctx);
+    await source.stop();
+
+    const result = normalize(emitted[0]!, 'wsdot-highway-alerts');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.incident.location.approximate).toBe(true);
+    expect(result.incident.incidentType).toBe('traffic');
+  });
+});
+
+describe('NWS and USGS adapters through the poller', () => {
+  it('ingests a polygon weather alert as an area-level hazard', async () => {
+    const nws = findCatalogSource('nws-alerts-wa')!;
+    const body = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [-122.4, 47.4],
+                [-122.2, 47.4],
+                [-122.2, 47.6],
+                [-122.4, 47.6],
+                [-122.4, 47.4],
+              ],
+            ],
+          },
+          properties: {
+            id: 'urn:oid:2.49.0.1.840.0.zzz',
+            areaDesc: 'King',
+            sent: new Date(Date.now() - 4 * 60_000).toISOString(),
+            event: 'High Wind Warning',
+            headline: 'High Wind Warning in effect',
+            senderName: 'NWS Seattle WA',
+          },
+        },
+      ],
+    };
+
+    const source = new CatalogFeedSource({
+      source: nws,
+      pollSeconds: 3600,
+      fetchImpl: (async () => new Response(JSON.stringify(body), { status: 200 })) as typeof fetch,
+    });
+    const { ctx, emitted } = testContext();
+    await source.start(ctx);
+    await source.stop();
+
+    expect(emitted).toHaveLength(1);
+    const result = normalize(emitted[0]!, 'nws-alerts-wa');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.incident.location.precision).toBe('area');
+    expect(result.incident.incidentType).toBe('hazard');
+  });
+
+  it('asks USGS only for events after the watermark on the second poll', async () => {
+    const usgs = findCatalogSource('usgs-earthquakes-wa')!;
+    const quakeAt = Date.now() - 8 * 60_000;
+    const requests: string[] = [];
+    const body = {
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [-122.1, 47.2, 12] },
+          properties: {
+            mag: 3.1,
+            place: '9 km E of Carnation, Washington',
+            time: quakeAt,
+            type: 'earthquake',
+            title: 'M 3.1 - 9 km E of Carnation, Washington',
+            code: '61999001',
+          },
+        },
+      ],
+    };
+
+    const source = new CatalogFeedSource({
+      source: usgs,
+      pollSeconds: 0.01,
+      fetchImpl: (async (input: RequestInfo | URL) => {
+        requests.push(String(input));
+        return new Response(JSON.stringify(body), { status: 200 });
+      }) as typeof fetch,
+    });
+
+    const { ctx, emitted } = testContext();
+    await source.start(ctx);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    await source.stop();
+
+    expect(requests.length).toBeGreaterThan(1);
+    expect(new URL(requests[0]!).searchParams.has('starttime')).toBe(false);
+    expect(new URL(requests[1]!).searchParams.get('starttime')).toBe(
+      new Date(quakeAt).toISOString().replace(/\.\d+Z$/, ''),
+    );
+    // The same quake returned twice is ingested once.
+    expect(emitted).toHaveLength(1);
+  });
+});

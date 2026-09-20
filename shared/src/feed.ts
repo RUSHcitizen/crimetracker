@@ -1,3 +1,4 @@
+import { ringCentroid } from './geo.js';
 import type { RawIncident } from './types.js';
 
 /**
@@ -114,6 +115,18 @@ export function mapRecord(record: unknown, map: FeedFieldMap): RawIncident | nul
     const geometry = obj.geometry as { type?: unknown; coordinates?: unknown } | null;
     if (geometry && geometry.type === 'Point' && Array.isArray(geometry.coordinates)) {
       coordinates = geometry.coordinates; // [lon, lat] — the validator handles the order
+    } else if (
+      geometry &&
+      (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') &&
+      Array.isArray(geometry.coordinates)
+    ) {
+      /*
+       * An area, not a point. National Weather Service alerts and similar feeds publish
+       * the affected polygon; the centre of area is the only defensible single position
+       * for it. Callers must keep the precision at `area` — a warning covering a county
+       * is not an event at its centroid, and the HUD says so.
+       */
+      coordinates = ringCentroid(geometry.coordinates);
     }
   }
   // Esri ArcGIS features carry a flat {x, y} geometry instead of GeoJSON coordinates.
