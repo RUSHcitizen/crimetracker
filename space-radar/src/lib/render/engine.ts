@@ -588,6 +588,16 @@ export class Engine {
   flyTo(id: string, opts: { distanceKm?: number; track?: boolean } = {}): void {
     const obj = this.world.get(id);
     if (!obj) return;
+
+    // Flying somewhere else releases an existing lock. Without this the rig keeps pulling
+    // the focus back to the tracked object every frame while the panel claims you are
+    // looking at the new one — the camera and the readout disagree, and the camera wins.
+    if (this._trackedId && this._trackedId !== id && !opts.track) {
+      this._trackedId = null;
+      this._chase = false;
+      this.rig.setFocusResponsiveness(0.18);
+    }
+
     const r = this.world.resolve(obj, this.clock.jd);
 
     if (r.unplaced) {
