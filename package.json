@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20.3.0"
+  },
   "description": "SPACE RADAR \u2014 an interactive instrument for flying around the Solar System.",
   "scripts": {
     "dev": "astro dev",
@@ -11,7 +14,7 @@
     "check": "astro check",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy": "astro build && wrangler deploy",
+    "deploy": "npm run build && wrangler deploy",
     "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {
