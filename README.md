@@ -196,8 +196,9 @@ The client only ever talks to this Worker.
 
 ## Deploying
 
-The Worker is named `space-radar`, so a first successful deploy publishes it at
-`https://space-radar.<your-subdomain>.workers.dev`.
+The Worker is named `space`, so a first successful deploy publishes it at
+`https://space.<your-subdomain>.workers.dev`. (The interface is still called SPACE RADAR —
+only the deployment target is named after the repository.)
 
 Three ways, in order of least setup:
 
