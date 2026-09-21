@@ -225,12 +225,20 @@ secrets, `CLOUDFLARE_API_TOKEN` (create one with the "Edit Cloudflare Workers" t
 | Deploy command | `npx wrangler deploy` |
 | Root directory | *(blank — the app is the repository)* |
 
-`.node-version` pins Node 22, and that matters for more than matching the test environment:
-Node 22 ships npm 10, while npm 11 and later refuse to run dependencies' install scripts
-unless each one is approved. esbuild and workerd both use a postinstall script to fetch
-their platform binary, so under a newer npm they install without one and `astro build`
-fails looking for an esbuild binary that was never downloaded. If your builder ignores
-`.node-version`, set `NODE_VERSION=22.22.2` as a build environment variable instead.
+Set the build command explicitly. Cloudflare installs dependencies for you but does **not**
+infer a build, so leaving the field empty runs `wrangler deploy` against a `dist/` that was
+never produced — the failure reads as a missing `assets.directory`, which points at the
+config rather than at the real cause.
+
+`.node-version` records the Node version this was built and tested against. Builders are
+free to ignore it (Cloudflare's does, using its own Node 24, which works fine); set
+`NODE_VERSION` as a build environment variable if you need to force it.
+
+You may see `npm warn allow-scripts` for esbuild and workerd during install. It is noise
+here: recent npm declines to run dependencies' postinstall scripts unless approved, but
+esbuild and workerd both resolve their platform binary through optional dependencies
+instead, so the build is unaffected. Verified by installing with `--ignore-scripts` and
+building successfully.
 
 The build must run `npm run build` rather than `astro build` directly: the post-build step
 writes `dist/.assetsignore`, without which wrangler rejects the deploy for trying to upload
