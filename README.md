@@ -7,8 +7,9 @@ realtime WebSocket stream.
 It runs on real published agency data. Seattle Fire 911 dispatch, SPD calls for service,
 SPD offence reports, WSDOT statewide roadway incidents, National Weather Service warnings
 and USGS seismic events are catalogued and one setting away, and any other portal dataset
-can be connected from configuration. An optional overlay shows WSDOT's public roadway
-cameras beside the incidents. It also ships a simulation engine so it is fully functional
+can be connected from configuration. Archived public scanner calls from OpenMHz are wired
+in as an audio source, and an optional overlay shows WSDOT's public roadway cameras beside
+the incidents. It also ships a simulation engine so it is fully functional
 with nothing connected, and it never presents simulated data as real: the mode indicator
 reflects which sources are actually running, and live mode stops the simulation outright.
 
@@ -70,6 +71,9 @@ npm run typecheck  # tsc across all three workspaces
 npm run build      # production build
 npm start          # serve the production API
 npm run prepare:geo # regenerate the bundled map geometry from us-atlas
+npm run sources     # list catalogued feeds and the portals you can add
+npm run probe:source -- <id>      # check a feed mapping against live data
+npm run probe:openmhz -- <system> # check a radio system before wiring it up
 ```
 
 ### Keyboard
@@ -227,6 +231,77 @@ The scope is deliberate, and it is the whole feature:
   copy marked stale rather than emptying the overlay.
 
 What this is **not** is any form of camera analysis. See section 11.
+
+### Police radio (OpenMHz)
+
+Archived public scanner calls, as a first-class source. OpenMHz aggregates recordings made
+by community-run receivers and publishes them as discrete *calls* — each one a clip with a
+talkgroup, a start time and a duration. Point at a system by the id in its page URL:
+
+```bash
+MODE=live SOURCES=openmhz:psern025 OPENMHZ_ACK=1 npm run dev
+#   https://openmhz.com/system/psern025   ->   openmhz:psern025
+```
+
+Narrow to specific talkgroups with `+` (not `,` — `SOURCES` is itself comma-separated):
+
+```bash
+SOURCES=openmhz:psern025/1103+1104
+```
+
+Check what a system actually carries before wiring it up. This downloads no audio and
+transcribes nothing; it is purely a shape check:
+
+```bash
+npm run probe:openmhz -- psern025
+```
+
+**Nothing here decodes anything.** A receiver captures what is broadcast in the clear;
+encrypted talkgroups produce no intelligible audio and are not published. So this reads
+already-public recordings of already-unencrypted traffic, and the rule in section 11
+stands untouched. The practical consequence is worth stating plainly: much of Puget Sound
+law-enforcement dispatch *is* encrypted and will simply not appear, so what a given system
+carries varies enormously. The probe tells you before you build on it.
+
+**It needs speech-to-text.** Set `STT_PROVIDER=whisper-http` and `STT_BASE_URL` (section
+5 — a local Whisper server works and keeps the audio on your machine). Without it the
+source registers, reports `degraded`, explains why, and fetches nothing: a talkgroup and a
+timestamp are not an incident, and manufacturing one from them is exactly what this
+project exists not to do.
+
+What comes out is explicit about which parts are real:
+
+| Field | Origin |
+| --- | --- |
+| timestamp | **source** — the recorder's own call start time |
+| transcript | **source** — verbatim, stored unedited |
+| location label | **derived** from the talkgroup's own metadata, or **ai-inferred** if a model read an address out of the transcript |
+| type, severity, description | **ai-inferred** from the transcript |
+| coordinates | **always `null`** |
+
+That last row is not a limitation to route around. A transcript cannot establish a
+position, so a radio-only deployment produces a full incident stream over an empty map,
+and the HUD says so rather than filling it with invented points.
+
+Being a good citizen is part of the adapter, not a footnote: OpenMHz is volunteer-run, so
+only genuinely new calls are fetched, audio is never re-downloaded, transcription is
+sequential and capped per poll (`OPENMHZ_MAX_CALLS_PER_POLL`), clips under
+`OPENMHZ_MIN_CALL_SECONDS` are skipped before they cost anyone anything, and `429` backs
+off hard. Read the service's terms before pointing a continuous poller at it.
+
+Two things the adapter refuses to do. It **discards `srcList`** — the radio identifiers of
+the units that transmitted — because a radio ID is a persistent handle on a specific unit
+and keeping it across calls would build exactly the movement history of identifiable
+people that section 11 rules out. And it **will not fetch call audio from an arbitrary
+host**: those URLs arrive inside feed records and are fetched server-side, so they go
+through an allow-list (`OPENMHZ_AUDIO_HOSTS`) that also refuses private and loopback
+addresses outright.
+
+One thing to weigh before you expose a deployment: **transcripts are verbatim radio
+traffic**, and dispatch traffic routinely contains names, addresses, plate numbers and
+medical details about private individuals. Storing them is what makes the provenance model
+work — you can see exactly what the model read. But it means your database holds that
+material, so think about who can reach it.
 
 ### Generic feed
 
@@ -471,7 +546,7 @@ thousands of incidents cost a handful of layers rather than thousands of DOM nod
 npm test
 ```
 
-294 tests covering incident normalization, coordinate validation and rejection, timestamp
+343 tests covering incident normalization, coordinate validation and rejection, timestamp
 parsing, provenance rules, the simulation generator, the heuristic and OpenAI-compatible
 extractors, source policy and feed mapping, the audio buffer, pattern detection
 (including an equivalence check against a brute-force reference implementation and a
@@ -485,8 +560,11 @@ ad-hoc source specs and their rejection rules, publisher access keys (that only 
 variables are read, that a keyed source without its key is skipped rather than started,
 and that the key never reaches the descriptor, the public config, a log or an error
 message), the camera directory (host allow-list, region filter, retired cameras, cache
-and stale-on-failure behaviour), and the rule that a LIVE deployment never backfills
-simulated history.
+and stale-on-failure behaviour), the OpenMHz radio adapter (call mapping against recorded
+shapes, the acknowledgement and speech-to-text gates, client-side talkgroup filtering,
+squelch-blip and per-poll caps, rate-limit back-off, watermarking and dedup, the
+server-side fetch allow-list and its SSRF refusals, and that unit radio identifiers never
+reach storage), and the rule that a LIVE deployment never backfills simulated history.
 
 ## 10. Security notes
 
@@ -509,6 +587,12 @@ simulated history.
 * Camera image URLs are checked against a host allow-list before the browser is told to
   load them. What hosts a viewer's browser can be pointed at is not a decision an upstream
   record gets to make.
+* Media URLs that arrive inside feed records and are fetched *server-side* — OpenMHz call
+  audio — go through `assertFetchableMediaUrl`, which is stricter than the ordinary source
+  policy: https only with no loopback exception, no credentials, an operator-controlled
+  host allow-list, and an outright refusal of loopback, link-local and RFC1918 addresses.
+  A feed that could name `169.254.169.254` or an address inside the deployment's own
+  network is a server-side request forgery surface, and it is treated as one.
 * Sound is off by default and, when enabled, uses WebAudio-generated tones only — there
   are no audio assets in this project.
 
@@ -516,7 +600,11 @@ simulated history.
 
 Some things this project deliberately does not do, and will not be extended to do:
 
-* **Decode encrypted radio.** No workaround, no setting, no exception.
+* **Decode encrypted radio.** No workaround, no setting, no exception. The OpenMHz source
+  in section 4 is not a qualification of this: a community receiver captures what is
+  broadcast in the clear, encrypted talkgroups yield no intelligible audio and are never
+  published, and this project reads the resulting public archive. Nothing in it attempts
+  decryption, and no configuration can make it try.
 * **Analyse camera or CCTV footage to infer crimes.** Two separate problems. The feeds
   usually described as "open cameras" are unsecured private devices whose owners never
   intended public access, and reaching them is unauthorised access however easy it is.
@@ -531,7 +619,11 @@ Some things this project deliberately does not do, and will not be extended to d
   observation; the same still with a model's guess written across it is an accusation
   about whoever happens to be in shot.
 * **Identify or track individuals.** Nothing here is keyed to a person, and the incident
-  model has no field for one.
+  model has no field for one. Concretely: OpenMHz call metadata carries `srcList`, the
+  radio identifiers of the units that transmitted, and this project drops it at the
+  adapter boundary. A radio ID is a persistent handle on a specific unit; retaining it
+  across calls would be a movement history of identifiable people, which is not a feature
+  worth having at any price. A test asserts it never reaches storage.
 * **Predict crime.** Pattern Detection describes concentrations in reports already
   received, and says so wherever it appears.
 
@@ -547,6 +639,10 @@ the U.S. Geological Survey Earthquake Hazards Program. Each catalogue entry carr
 attribution the publisher asks for and it is shown in the source panel. Roadway camera
 imagery remains WSDOT's and is displayed from their servers, not copied. Check each
 dataset's own terms before running a continuous poller against it.
+
+Radio recordings, where configured, are hosted by [OpenMHz](https://openmhz.com) and were
+made by volunteer operators running trunk-recorder. It is a community service on a
+hobbyist budget — poll it gently, and read its terms.
 
 Incident data, when live sources are enabled, comes from the publishing agency and carries
 its attribution in the source panel — for the catalogued sources, the City of Seattle Open

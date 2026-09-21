@@ -1,10 +1,17 @@
-import { catalogIds, findCatalogSource, type AppMode, type SourceStatus } from '@crimetracker/shared';
+import {
+  catalogIds,
+  findCatalogSource,
+  parseOpenMhzSpec,
+  type AppMode,
+  type SourceStatus,
+} from '@crimetracker/shared';
 import type { Config } from '../config.js';
 import { NullSpeechToText, WhisperHttpSpeechToText } from '../audio/stt.js';
 import type { IncidentExtractor } from '../extraction/types.js';
 import { PublicAudioSource } from './audio.js';
 import { SourcePolicyError } from './policy.js';
 import { CatalogFeedSource } from './catalogFeed.js';
+import { OpenMhzCallSource } from './openmhz.js';
 import { PublicSafetyFeedSource } from './publicFeed.js';
 import { SimulationSource } from './simulation.js';
 import type { DataSource } from './types.js';
@@ -45,12 +52,65 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
     }),
   );
 
+  /*
+   * Speech-to-text is built once and shared: the OpenMHz source and the live-stream
+   * source both need it, and whether a *real* one is configured decides whether either
+   * can produce anything at all.
+   */
+  const stt = buildSpeechToText(config);
+  const transcriptionAvailable = !(stt instanceof NullSpeechToText);
+
   // Catalogued real feeds, selected by id — the normal way to connect live data.
   for (const id of config.sources) {
+    // Radio call archives are their own adapter: they poll discrete recordings and run
+    // each through transcription, rather than mapping columns onto an incident.
+    const openMhz = parseOpenMhzSpec(id, config.openmhz.apiBase);
+    if (openMhz) {
+      if (!config.openmhz.acknowledged) {
+        warnings.push(
+          `${id}: requires OPENMHZ_ACK=1, confirming the recordings are lawfully and ` +
+            'publicly accessible and that you are permitted to process them.',
+        );
+        continue;
+      }
+      if (!transcriptionAvailable) {
+        // Built anyway, so the HUD shows the source and states why it is inert. A
+        // missing source is indistinguishable from a broken one.
+        warnings.push(
+          `${id}: no speech-to-text configured (STT_PROVIDER), so radio calls cannot ` +
+            'become incidents. The source will run inert.',
+        );
+      }
+      try {
+        sources.push(
+          new OpenMhzCallSource({
+            system: openMhz,
+            acknowledged: config.openmhz.acknowledged,
+            stt,
+            transcriptionAvailable,
+            extractor,
+            pollSeconds: config.openmhz.pollSeconds,
+            maxCallsPerPoll: config.openmhz.maxCallsPerPoll,
+            minCallSeconds: config.openmhz.minCallSeconds,
+            audioHosts: config.openmhz.audioHosts,
+          }),
+        );
+      } catch (error) {
+        warnings.push(describe(id, error));
+      }
+      continue;
+    }
+
     const catalogSource = findCatalogSource(id, config.catalogOverrideUrl);
     if (!catalogSource) {
+      // A bare number here is almost always a talkgroup list written with commas, which
+      // `SOURCES` split in half. Saying so beats "unknown source: 1104".
+      const hint = /^\d+$/.test(id)
+        ? ` Talkgroups in an OpenMHz spec are joined with "+", not "," — SOURCES is ` +
+          'itself comma-separated, e.g. openmhz:psern025/1103+1104.'
+        : '';
       warnings.push(
-        `Unknown source "${id}". Available ids: ${catalogIds().join(', ')}.`,
+        `Unknown source "${id}". Available ids: ${catalogIds().join(', ')}.${hint}`,
       );
       continue;
     }
@@ -97,16 +157,7 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
 
   if (config.audio.enabled) {
     try {
-      const stt =
-        config.audio.stt.provider === 'whisper-http' && config.audio.stt.baseUrl
-          ? new WhisperHttpSpeechToText({
-              baseUrl: config.audio.stt.baseUrl,
-              model: config.audio.stt.model,
-              apiKey: config.audio.stt.apiKey,
-            })
-          : new NullSpeechToText();
-
-      if (stt instanceof NullSpeechToText) {
+      if (!transcriptionAvailable) {
         warnings.push(
           'public-audio: no speech-to-text configured (STT_PROVIDER), so segments will be discarded.',
         );
@@ -140,6 +191,17 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
   }
 
   return { sources, warnings };
+}
+
+/** The configured speech-to-text provider, or the inert one. */
+function buildSpeechToText(config: Config) {
+  return config.audio.stt.provider === 'whisper-http' && config.audio.stt.baseUrl
+    ? new WhisperHttpSpeechToText({
+        baseUrl: config.audio.stt.baseUrl,
+        model: config.audio.stt.model,
+        apiKey: config.audio.stt.apiKey,
+      })
+    : new NullSpeechToText();
 }
 
 function describe(label: string, error: unknown): string {

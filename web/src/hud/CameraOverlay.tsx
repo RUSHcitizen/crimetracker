@@ -35,7 +35,7 @@ export function CameraToggle() {
         ? 'UNAVAILABLE'
         : count > 0
           ? `${count}`
-          : 'CAMERAS';
+          : '';
 
   return (
     <button
@@ -53,7 +53,7 @@ export function CameraToggle() {
       <span className="camtoggle__glyph" aria-hidden="true">
         ▣
       </span>
-      <span className="camtoggle__label">CAM {label}</span>
+      <span className="camtoggle__label">{label ? `CAM ${label}` : 'CAM'}</span>
     </button>
   );
 }

@@ -27,7 +27,8 @@
     "deploy": "npm run build:web && wrangler deploy",
     "build:web": "npm run build --workspace shared && npm run build --workspace web",
     "probe:source": "tsx scripts/probe-source.ts",
-    "sources": "tsx scripts/probe-source.ts"
+    "sources": "tsx scripts/probe-source.ts",
+    "probe:openmhz": "tsx scripts/probe-openmhz.ts"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

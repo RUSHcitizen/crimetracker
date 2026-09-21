@@ -90,8 +90,18 @@ Implementations shipped:
   spec (`socrata:<host>/<dataset>`, `arcgis:<layer url>`, `geojson:<url>`) for a dataset
   nobody has catalogued. Where a publisher issues an access key it is held per source,
   appended per request, and kept out of the descriptor, the logs and every error message.
+* **`OpenMhzCallSource`** — optional. Polls a public radio-call archive (OpenMHz), which
+  publishes *discrete* recordings rather than a stream: each call carries an exact
+  timestamp and a talkgroup, so deduplication is exact, only genuinely new audio is ever
+  fetched, and the talkgroup supplies the one non-inferred place signal radio traffic
+  offers. Call → `SpeechToText` → `IncidentExtractor` → incident, with coordinates always
+  `null`. Requires an explicit acknowledgement and a real speech-to-text provider; without
+  the latter it runs inert and says so rather than manufacturing incidents out of
+  timestamps. Unit radio identifiers (`srcList`) are discarded at the adapter boundary.
 * **`PublicAudioSource`** — optional. Pulls a **publicly accessible** audio stream into a
-  rolling buffer → `SpeechToText` → `IncidentExtractor`. Disabled by default.
+  rolling buffer → `SpeechToText` → `IncidentExtractor`. Disabled by default. Where a
+  source offers discrete archived calls, prefer `OpenMhzCallSource`: a stream has to guess
+  where one transmission ends and the next begins, and an archive does not.
 
 The app never depends on a specific provider: the registry owns a list of `DataSource`s
 and the pipeline only knows the interface.
@@ -119,8 +129,15 @@ and none should be added — see the README's *Out of scope*.
 ### Legal / ethical boundaries (enforced in code, not just docs)
 
 `server/src/sources/policy.ts` rejects any source URL that is not `https:` (or explicit
-loopback for local development), refuses URLs carrying credentials, and the audio source
-refuses to start without an explicit `PUBLIC_AUDIO_ACK=1` acknowledgement. Ad-hoc source
+loopback for local development), refuses URLs carrying credentials, and the audio sources
+refuse to start without an explicit acknowledgement (`PUBLIC_AUDIO_ACK=1`,
+`OPENMHZ_ACK=1`).
+
+It draws a second, stricter line for URLs that arrive *inside external data* and are
+fetched server-side — call audio named by a feed record. `assertFetchableMediaUrl` drops
+the loopback exception, requires an operator-controlled host allow-list, and refuses
+loopback, link-local and RFC1918 addresses outright. An operator-supplied URL and an
+attacker-influenced one are not the same kind of input and are not checked the same way. Ad-hoc source
 specs are held to the same rule before they are even built into a source. There is no
 support — and no code path — for encrypted feeds, credentialed private feeds, or
 access-control circumvention. A publisher's own freely-issued access code (WSDOT) is the

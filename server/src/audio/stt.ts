@@ -84,6 +84,9 @@ function extensionFor(mimeType: string): string {
   if (mimeType.includes('mpeg')) return 'mp3';
   if (mimeType.includes('ogg')) return 'ogg';
   if (mimeType.includes('wav')) return 'wav';
+  // Trunk-recorder archives (OpenMHz among them) serve AAC in an MP4 container. Whisper
+  // endpoints key off the filename extension, and `.bin` is rejected outright.
+  if (mimeType.includes('mp4') || mimeType.includes('m4a')) return 'm4a';
   if (mimeType.includes('aac')) return 'aac';
   return 'bin';
 }

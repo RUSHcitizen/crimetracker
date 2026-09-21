@@ -6,6 +6,7 @@ import { RightPanel } from './hud/RightPanel.js';
 import { BottomStream } from './hud/BottomStream.js';
 import { PatternOverlay, PatternToggle } from './hud/PatternOverlay.js';
 import { CameraCard, CameraNotice, CameraToggle } from './hud/CameraOverlay.js';
+import { PositionNotice } from './hud/PositionNotice.js';
 import { StatsView } from './hud/StatsView.js';
 import { CommandSearch } from './hud/CommandSearch.js';
 import { RealtimeClient } from './lib/realtime.js';
@@ -119,6 +120,7 @@ export default function App() {
           <PatternOverlay />
           <PatternToggle />
           <CameraNotice />
+          <PositionNotice />
           <div className="hud__centerfoot">
             <MapControls />
             <ModeBanner mode={mode} />

@@ -68,6 +68,11 @@ Status key: `[x]` done · `[~]` in progress · `[ ]` todo
 ## Phase 11 — Optional public-audio transcription pipeline
 - [x] `AudioBuffer` → `SpeechToText` interface → transcript → extractor → incident
 - [x] `PublicAudioSource`, disabled by default, explicit acknowledgement required
+- [x] `OpenMhzCallSource` — archived public scanner calls as a real source, with exact
+      per-call timestamps, talkgroup-derived place labels, and coordinates always null
+- [x] Unit radio identifiers (`srcList`) discarded at the adapter boundary
+- [x] `assertFetchableMediaUrl` — SSRF-resistant policy for URLs named by external data
+- [x] `npm run probe:openmhz` — check a system's shape before wiring it up
 
 ## Phase 12 — AI extraction
 - [x] `IncidentExtractor` interface

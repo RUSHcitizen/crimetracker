@@ -240,3 +240,29 @@
     width: auto;
   }
 }
+
+/* -------------------------- unplottable incidents ------------------------- */
+
+/*
+ * Lives here beside the camera notice because the two share the centre slot and must
+ * look like the same kind of statement: a quiet line of fact about what the map is
+ * showing, not an error.
+ */
+.posnotice {
+  align-self: center;
+  max-width: 460px;
+  margin-top: 6px;
+  padding: 5px 9px;
+  pointer-events: none;
+  color: var(--text-dim);
+  line-height: 1.45;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--line-accent);
+  backdrop-filter: blur(10px);
+}
+
+.posnotice__detail {
+  color: var(--text-faint);
+}

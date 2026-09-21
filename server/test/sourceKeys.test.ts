@@ -103,3 +103,74 @@ describe('GET /api/cameras', () => {
     await app.close();
   });
 });
+
+describe('OpenMHz source wiring', () => {
+  const openmhzEnv = (over: Record<string, string> = {}) =>
+    env({
+      SOURCES: 'openmhz:psern025',
+      OPENMHZ_ACK: '1',
+      STT_PROVIDER: 'whisper-http',
+      STT_BASE_URL: 'https://stt.example.org/v1',
+      ...over,
+    });
+
+  it('builds a radio source from the spec the site’s URL implies', () => {
+    const { sources, warnings } = buildSources(loadConfig(openmhzEnv()), new HeuristicExtractor());
+    const built = sources.find((s) => s.descriptor.id === 'openmhz:psern025');
+    expect(built).toBeDefined();
+    expect(built?.descriptor.kind).toBe('audio');
+    expect(built?.descriptor.url).toBe('https://openmhz.com/system/psern025');
+    expect(warnings.join('\n')).not.toContain('Unknown source');
+  });
+
+  it('counts as a live source, so LIVE mode becomes available', () => {
+    const { warnings } = buildSources(loadConfig(openmhzEnv()), new HeuristicExtractor());
+    expect(warnings.join('\n')).not.toContain('No live source is configured');
+  });
+
+  it('refuses to run without an explicit acknowledgement', () => {
+    const { sources, warnings } = buildSources(
+      loadConfig(openmhzEnv({ OPENMHZ_ACK: '' })),
+      new HeuristicExtractor(),
+    );
+    expect(sources.some((s) => s.descriptor.id.startsWith('openmhz:'))).toBe(false);
+    expect(warnings.join('\n')).toContain('OPENMHZ_ACK=1');
+  });
+
+  it('still registers the source without speech-to-text, and warns', () => {
+    // A missing source in the HUD is indistinguishable from a broken one, so it is
+    // registered and left to explain itself.
+    const { sources, warnings } = buildSources(
+      loadConfig(openmhzEnv({ STT_PROVIDER: '', STT_BASE_URL: '' })),
+      new HeuristicExtractor(),
+    );
+    expect(sources.some((s) => s.descriptor.id === 'openmhz:psern025')).toBe(true);
+    expect(warnings.join('\n')).toContain('STT_PROVIDER');
+  });
+
+  it('carries a talkgroup filter through to the source id', () => {
+    const { sources } = buildSources(
+      loadConfig(openmhzEnv({ SOURCES: 'openmhz:psern025/1103+1104' })),
+      new HeuristicExtractor(),
+    );
+    expect(sources.map((s) => s.descriptor.id)).toContain('openmhz:psern025/1103+1104');
+  });
+
+  it('rejects a malformed spec as an unknown source rather than guessing', () => {
+    const { warnings } = buildSources(
+      loadConfig(openmhzEnv({ SOURCES: 'openmhz:psern025/all' })),
+      new HeuristicExtractor(),
+    );
+    expect(warnings.join('\n')).toContain('Unknown source');
+  });
+
+  it('runs alongside catalogued structured feeds', () => {
+    const { sources } = buildSources(
+      loadConfig(openmhzEnv({ SOURCES: 'seattle-fire-911,openmhz:psern025' })),
+      new HeuristicExtractor(),
+    );
+    const ids = sources.map((s) => s.descriptor.id);
+    expect(ids).toContain('seattle-fire-911');
+    expect(ids).toContain('openmhz:psern025');
+  });
+});

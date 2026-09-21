@@ -1,5 +1,7 @@
 import {
   DEFAULT_CAMERA_IMAGE_HOSTS,
+  DEFAULT_OPENMHZ_API_BASE,
+  DEFAULT_OPENMHZ_AUDIO_HOSTS,
   requiredSourceKeys,
   WASHINGTON_BBOX,
   type BBox,
@@ -112,6 +114,17 @@ export interface Config {
       readonly apiKey: string;
     };
   };
+  readonly openmhz: {
+    /** Explicit acknowledgement, as for every audio path in this project. */
+    readonly acknowledged: boolean;
+    readonly apiBase: string;
+    readonly pollSeconds: number;
+    /** Calls transcribed per poll. Bounds upstream load and transcription cost. */
+    readonly maxCallsPerPoll: number;
+    /** Calls shorter than this are skipped before any audio is fetched. */
+    readonly minCallSeconds: number;
+    readonly audioHosts: readonly string[];
+  };
   readonly patterns: {
     readonly windowMinutes: number;
     readonly epsKm: number;
@@ -201,6 +214,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
         model: str('STT_MODEL', 'whisper-1'),
         apiKey: str('STT_API_KEY'),
       },
+    },
+    openmhz: {
+      acknowledged: bool('OPENMHZ_ACK'),
+      apiBase: str('OPENMHZ_API_BASE', DEFAULT_OPENMHZ_API_BASE),
+      // Calls are archived within a minute or so of the transmission; polling faster than
+      // this buys nothing and costs a volunteer-run service.
+      pollSeconds: Math.max(20, num('OPENMHZ_POLL_SECONDS', 45)),
+      maxCallsPerPoll: Math.max(1, num('OPENMHZ_MAX_CALLS_PER_POLL', 6)),
+      minCallSeconds: Math.max(0, num('OPENMHZ_MIN_CALL_SECONDS', 2)),
+      audioHosts: list('OPENMHZ_AUDIO_HOSTS', [...DEFAULT_OPENMHZ_AUDIO_HOSTS]),
     },
     patterns: {
       windowMinutes: num('PATTERN_WINDOW_MINUTES', 45),

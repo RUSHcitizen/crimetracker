@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { loadWorkerConfig, publicWorkerConfig, type Env } from '../src/config.js';
+import { parseOpenMhzSpec } from '@crimetracker/shared';
 
 /**
  * Workers have no `process.env`, so configuration arrives on the `Env` binding. These
@@ -94,5 +95,34 @@ describe('shouldPrimeSimulation', () => {
   it('respects a disabled backfill', async () => {
     const { shouldPrimeSimulation } = await import('../src/config.js');
     expect(shouldPrimeSimulation('simulation', false, 0)).toBe(false);
+  });
+});
+
+describe('sources the Worker cannot run', () => {
+  it('recognises an OpenMHz spec so the room can report it rather than drop it', () => {
+    // The room registers these in an error state naming the Node server. The important
+    // property is that the spec is *recognised*: an unrecognised id is skipped silently,
+    // which leaves an operator with a deployment that ingests nothing and says nothing.
+    expect(parseOpenMhzSpec('openmhz:psern025')).toBeDefined();
+    expect(parseOpenMhzSpec('openmhz:psern025/1103+1104')?.talkgroups).toEqual([1103, 1104]);
+    expect(parseOpenMhzSpec('seattle-fire-911')).toBeUndefined();
+  });
+
+  it('reads the camera access code from either variable', () => {
+    expect(loadWorkerConfig({ WSDOT_ACCESS_CODE: 'a' } as Env).cameras.enabled).toBe(true);
+    expect(loadWorkerConfig({ CAMERAS_ACCESS_CODE: 'b' } as Env).cameras.accessCode).toBe('b');
+    expect(loadWorkerConfig({} as Env).cameras.enabled).toBe(false);
+  });
+
+  it('never exposes an access key to the browser', () => {
+    const config = loadWorkerConfig({
+      SOURCES: 'wsdot-highway-alerts',
+      WSDOT_ACCESS_CODE: 'CODE-1',
+      AI_API_KEY: 'sk-test',
+    } as Env);
+    expect(config.sourceKeys).toEqual({ WSDOT_ACCESS_CODE: 'CODE-1' });
+    const serialized = JSON.stringify(publicWorkerConfig(config));
+    expect(serialized).not.toContain('CODE-1');
+    expect(serialized).not.toContain('sk-test');
   });
 });

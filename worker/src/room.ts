@@ -11,6 +11,7 @@ import {
   INCIDENT_TYPE_META,
   mapRecord,
   mapWsdotCameras,
+  parseOpenMhzSpec,
   parseTimestamp,
   modeSchema,
   normalizeIncident,
@@ -58,6 +59,14 @@ interface SourceRuntime {
   message: string | null;
   /** Epoch ms of the next due poll, for feed sources. */
   nextPollAt: number;
+  /**
+   * Whether the alarm loop may poll this source as a feed.
+   *
+   * False for anything that is not a catalogued feed or the generic configured one.
+   * Without this, a registered source with no catalogue entry falls through to
+   * `config.feed.url` and is polled against an endpoint that has nothing to do with it.
+   */
+  pollable: boolean;
   /** Catalogue entry, when this source is a catalogued real feed. */
   catalog?: CatalogSource;
   /** Newest accepted record time, for incremental polling. */
@@ -112,6 +121,29 @@ export class TrackerRoom extends DurableObject<Env> {
 
     // Catalogued real agency feeds, selected by id.
     for (const id of this.#config.sources) {
+      /*
+       * Radio call ingestion is a Node-server adapter: it fetches audio clips and posts
+       * them to a transcription service per call, which does not fit a Durable Object's
+       * CPU and subrequest budget. Rather than silently dropping the source — leaving an
+       * operator staring at a deployment that ingests nothing for no stated reason — it
+       * is registered in an error state that says exactly where it does run.
+       */
+      if (parseOpenMhzSpec(id)) {
+        const runtime = this.#registerSource({
+          id,
+          name: `OpenMHz ${id.slice('openmhz:'.length)}`,
+          kind: 'audio',
+          note:
+            'Archived public radio calls. Not available on the Cloudflare deployment: ' +
+            'transcribing call audio does not fit a Durable Object\u2019s CPU and ' +
+            'subrequest budget. Run this source on the Node server instead.',
+          url: null,
+        });
+        runtime.state = 'error';
+        runtime.message = 'Radio ingestion runs on the Node server, not on Workers.';
+        continue;
+      }
+
       const entry = findCatalogSource(id);
       if (!entry) continue;
       // A publisher that issues an access key cannot be polled without one: registering
@@ -366,6 +398,7 @@ export class TrackerRoom extends DurableObject<Env> {
     if (this.#mode === 'live') {
       for (const runtime of this.#sources.values()) {
         if (runtime.descriptor.kind === 'simulation') continue;
+        if (!runtime.pollable) continue;
         if (runtime.state === 'stopped' || now < runtime.nextPollAt) continue;
         runtime.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
         await this.#pollFeed(runtime);
@@ -650,10 +683,10 @@ export class TrackerRoom extends DurableObject<Env> {
 
   /* ---------------------------------- sources -------------------------------- */
 
-  #registerSource(descriptor: SourceDescriptor, catalog?: CatalogSource): void {
+  #registerSource(descriptor: SourceDescriptor, catalog?: CatalogSource): SourceRuntime {
     this.#repo.upsertSource(descriptor);
     const belongs = (descriptor.kind === 'simulation' ? 'simulation' : 'live') === this.#config.mode;
-    this.#sources.set(descriptor.id, {
+    const runtime: SourceRuntime = {
       descriptor,
       catalog,
       watermark: null,
@@ -663,7 +696,12 @@ export class TrackerRoom extends DurableObject<Env> {
       lastEventAt: null,
       message: null,
       nextPollAt: 0,
-    });
+      // A catalogued feed polls its own endpoint; the generic feed polls the configured
+      // one. Anything else has no endpoint of its own and must never be polled.
+      pollable: Boolean(catalog) || descriptor.id === 'public-feed',
+    };
+    this.#sources.set(descriptor.id, runtime);
+    return runtime;
   }
 
   #sourceStatuses(): SourceStatus[] {
