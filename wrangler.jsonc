@@ -44,10 +44,30 @@
   "triggers": { "crons": ["*/5 * * * *"] },
 
   "vars": {
-    // "live" plus SOURCES runs real agency feeds instead of the simulation.
-    // Run `npm run sources` to list catalogued ids.
-    "MODE": "simulation",
-    "SOURCES": "",
+    /*
+     * Live, on real agency data, out of the box.
+     *
+     * These three are the catalogued sources that need no credential of any kind, so a
+     * deployment shows real incidents with nothing further to configure:
+     *
+     *   seattle-fire-911     Seattle Fire 911 dispatch    (minutes behind)
+     *   nws-alerts-wa        NWS warnings and advisories  (seconds; area-level)
+     *   usgs-earthquakes-wa  Seismic events in WA         (minutes behind)
+     *
+     * To add statewide roadway incidents and the camera overlay, both of which need
+     * WSDOT's free access code:
+     *
+     *   npx wrangler secret put WSDOT_ACCESS_CODE
+     *   ...then add wsdot-highway-alerts to SOURCES below.
+     *
+     * Run `npm run sources` for the full catalogue and the ad-hoc spec syntax. Radio
+     * (`openmhz:`) is a Node-server source and is reported as unavailable here.
+     *
+     * Switching MODE and redeploying overrides whatever mode the running object was last
+     * switched to in the UI; see `resolveStartupMode`.
+     */
+    "MODE": "live",
+    "SOURCES": "seattle-fire-911,nws-alerts-wa,usgs-earthquakes-wa",
     "SIM_INTERVAL_SECONDS": "20",
     "SIM_BACKFILL": "2400",
     "SIM_BACKFILL_HOURS": "12",

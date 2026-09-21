@@ -416,6 +416,30 @@ Set `DATABASE_PATH` to a persistent volume and `RETENTION_HOURS` to bound growth
 
 ## 7b. Deploying to Cloudflare
 
+The deployed configuration is **live on real data out of the box**: `wrangler.jsonc` sets
+`MODE=live` with the three catalogued sources that need no credential
+(`seattle-fire-911`, `nws-alerts-wa`, `usgs-earthquakes-wa`), so a fresh deployment shows
+real incidents with nothing further to set up. The simulation engine is registered but
+stopped, and a live deployment never backfills fictional history.
+
+To add statewide roadway incidents and the camera overlay, both of which need WSDOT's
+free access code:
+
+```bash
+npx wrangler secret put WSDOT_ACCESS_CODE
+# then add wsdot-highway-alerts to SOURCES in wrangler.jsonc
+```
+
+Two things worth knowing about mode on a deployment. Switching mode in the UI persists
+across Durable Object eviction, so an operator's choice is not quietly undone. But editing
+`MODE` in `wrangler.jsonc` and redeploying **overrides** that stored choice — otherwise a
+config change would appear to do nothing while the deployment sat in the old mode. The
+rule lives in `resolveStartupMode` and is tested.
+
+Radio (`openmhz:`) is a Node-server source. Transcribing call audio does not fit a Durable
+Object's CPU and subrequest budget, so the Worker registers such a source in an error
+state naming the Node server rather than dropping it silently.
+
 The project also runs on Cloudflare Workers, with no Node server at all:
 
 ```bash

@@ -32,6 +32,7 @@ import {
 import {
   loadWorkerConfig,
   publicWorkerConfig,
+  resolveStartupMode,
   shouldPrimeSimulation,
   type Env,
   type WorkerConfig,
@@ -49,6 +50,14 @@ const SIMULATION_DESCRIPTOR: SourceDescriptor = {
 /** How often the alarm fires. Simulation and feed polling are both driven from it. */
 const TICK_MS = 2_000;
 const SNAPSHOT_SIZE = 2500;
+
+/** What survives eviction. `configMode` is what `MODE` said when `mode` was chosen. */
+interface PersistedMeta {
+  readonly mode: AppMode;
+  readonly configMode?: AppMode;
+  readonly accepted: number;
+  readonly rejected: number;
+}
 
 interface SourceRuntime {
   readonly descriptor: SourceDescriptor;
@@ -173,11 +182,12 @@ export class TrackerRoom extends DurableObject<Env> {
 
     // Restore counters and mode across evictions.
     void ctx.blockConcurrencyWhile(async () => {
-      const saved = await ctx.storage.get<{ mode: AppMode; accepted: number; rejected: number }>('meta');
+      const saved = await ctx.storage.get<PersistedMeta>('meta');
       if (saved) {
-        this.#mode = saved.mode;
         this.#accepted = saved.accepted;
         this.#rejected = saved.rejected;
+        // A runtime switch survives eviction; a changed deployment MODE overrides it.
+        this.#mode = resolveStartupMode(saved, this.#config.mode);
       }
       this.#booted = (await ctx.storage.get<boolean>('booted')) ?? false;
     });
@@ -721,11 +731,14 @@ export class TrackerRoom extends DurableObject<Env> {
   }
 
   async #persistMeta(): Promise<void> {
-    await this.ctx.storage.put('meta', {
+    const meta: PersistedMeta = {
       mode: this.#mode,
+      // Recorded so a later change to the deployment's MODE var can be recognised.
+      configMode: this.#config.mode,
       accepted: this.#accepted,
       rejected: this.#rejected,
-    });
+    };
+    await this.ctx.storage.put('meta', meta);
   }
 }
 

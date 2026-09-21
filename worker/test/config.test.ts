@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { loadWorkerConfig, publicWorkerConfig, type Env } from '../src/config.js';
+import {
+  loadWorkerConfig,
+  publicWorkerConfig,
+  resolveStartupMode,
+  type Env,
+} from '../src/config.js';
 import { parseOpenMhzSpec } from '@crimetracker/shared';
 
 /**
@@ -124,5 +129,43 @@ describe('sources the Worker cannot run', () => {
     const serialized = JSON.stringify(publicWorkerConfig(config));
     expect(serialized).not.toContain('CODE-1');
     expect(serialized).not.toContain('sk-test');
+  });
+});
+
+describe('resolveStartupMode', () => {
+  it('uses the configured mode on a first boot', () => {
+    expect(resolveStartupMode(null, 'live')).toBe('live');
+    expect(resolveStartupMode(undefined, 'simulation')).toBe('simulation');
+  });
+
+  it('keeps a runtime switch across eviction while the config is unchanged', () => {
+    // The operator switched to simulation in the UI; a redeploy of the same config must
+    // not silently undo that.
+    expect(resolveStartupMode({ mode: 'simulation', configMode: 'live' }, 'live')).toBe(
+      'simulation',
+    );
+    expect(resolveStartupMode({ mode: 'live', configMode: 'simulation' }, 'simulation')).toBe(
+      'live',
+    );
+  });
+
+  it('lets a changed deployment MODE override the stored choice', () => {
+    /*
+     * The failure this prevents: setting MODE=live in wrangler.jsonc and redeploying,
+     * only for the stored "simulation" to win — leaving a deployment that ignores its own
+     * configuration with no visible reason why.
+     */
+    expect(resolveStartupMode({ mode: 'simulation', configMode: 'simulation' }, 'live')).toBe(
+      'live',
+    );
+    expect(resolveStartupMode({ mode: 'live', configMode: 'live' }, 'simulation')).toBe(
+      'simulation',
+    );
+  });
+
+  it('treats state stored before configMode existed as unauthoritative', () => {
+    // Objects written by an earlier build carry no provenance for their mode, so the
+    // configuration decides rather than a value of unknown origin pinning the deployment.
+    expect(resolveStartupMode({ mode: 'simulation' }, 'live')).toBe('live');
   });
 });

@@ -213,6 +213,33 @@ function readSourceKeys(sources: readonly string[], env: Env): Record<string, st
 }
 
 /**
+ * Which mode a restored Durable Object should start in.
+ *
+ * Two things want to decide this, and they have to be told apart. A runtime switch
+ * through `POST /api/mode` must survive the object being evicted, or the operator's
+ * choice quietly reverts. But an operator who edits `MODE` in the deployment config and
+ * redeploys has also made a deliberate choice, and it is the more recent one — if the
+ * stored value simply won, that edit would appear to do nothing and the deployment would
+ * sit in simulation while its configuration said live.
+ *
+ * So the resolution is: while the configured mode is unchanged, the stored runtime
+ * choice stands; the moment it changes, the new configuration takes over.
+ *
+ * Extracted here because the rule is easy to get wrong and impossible to see from the
+ * outside once it is wrong — the symptom is a deployment that ignores its own config.
+ */
+export function resolveStartupMode(
+  saved: { mode: AppMode; configMode?: AppMode } | null | undefined,
+  configMode: AppMode,
+): AppMode {
+  if (!saved) return configMode;
+  // Objects stored before `configMode` was recorded: treat the config as authoritative
+  // rather than letting a value of unknown provenance pin the deployment.
+  if (saved.configMode === undefined) return configMode;
+  return saved.configMode === configMode ? saved.mode : configMode;
+}
+
+/**
  * Whether simulated history should be primed right now.
  *
  * Extracted so the rule is testable on its own: backfilling thousands of invented
