@@ -1,14 +1,10 @@
-node_modules/
 dist/
-dist-types/
-build/
+.astro/
+node_modules/
+.wrangler/
 *.tsbuildinfo
+
+# Local Worker configuration — may contain secrets.
+.dev.vars
 .env
 .env.local
-data/*.db
-data/*.db-*
-coverage/
-.DS_Store
-*.log
-.wrangler/
-.dev.vars

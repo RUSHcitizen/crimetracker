@@ -1,8 +1,7 @@
 # Deploy SPACE RADAR to Cloudflare Workers.
 #
-# Manual trigger only (`workflow_dispatch`): this repository holds two unrelated apps, and
-# a push to a feature branch should not publish either of them. Run it from the Actions
-# tab, or with `gh workflow run deploy-space-radar.yml`.
+# Manual trigger only (`workflow_dispatch`): a push to a feature branch should not publish
+# the site. Run it from the Actions tab, or with `gh workflow run deploy.yml`.
 #
 # ONE-TIME SETUP
 #   1. Create a Cloudflare API token with the "Edit Cloudflare Workers" template:
@@ -12,7 +11,7 @@
 #   3. Add your account ID as the secret CLOUDFLARE_ACCOUNT_ID
 #      (it is in the URL of your Cloudflare dashboard, and on the Workers overview page).
 #
-# The Worker is named `space-radar` in space-radar/wrangler.jsonc, so the first successful
+# The Worker is named `space-radar` in wrangler.jsonc, so the first successful
 # run publishes it at https://space-radar.<your-subdomain>.workers.dev.
 
 name: Deploy SPACE RADAR
@@ -35,10 +34,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: space-radar
-
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +41,6 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: space-radar/package-lock.json
 
       - name: Install
         run: npm ci
@@ -68,5 +62,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: space-radar
           command: ${{ inputs.dry_run && 'deploy --dry-run' || 'deploy' }}
