@@ -220,8 +220,17 @@ secrets, `CLOUDFLARE_API_TOKEN` (create one with the "Edit Cloudflare Workers" t
 
 | Setting | Value |
 |---|---|
+| Branch | the branch holding this app — **not** whatever the repo's default is |
 | Build command | `npm ci && npm run build` |
 | Deploy command | `npx wrangler deploy` |
+| Root directory | *(blank — the app is the repository)* |
+
+`.node-version` pins Node 22, and that matters for more than matching the test environment:
+Node 22 ships npm 10, while npm 11 and later refuse to run dependencies' install scripts
+unless each one is approved. esbuild and workerd both use a postinstall script to fetch
+their platform binary, so under a newer npm they install without one and `astro build`
+fails looking for an esbuild binary that was never downloaded. If your builder ignores
+`.node-version`, set `NODE_VERSION=22.22.2` as a build environment variable instead.
 
 The build must run `npm run build` rather than `astro build` directly: the post-build step
 writes `dist/.assetsignore`, without which wrangler rejects the deploy for trying to upload
