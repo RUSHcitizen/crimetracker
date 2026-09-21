@@ -197,13 +197,46 @@ The client only ever talks to this Worker.
 
 ## Deploying
 
+`wrangler.jsonc` here is deliberately separate from the repository-root one, which belongs
+to the unrelated Crime Tracker Worker in this repo. The Worker is named `space-radar`, so a
+first successful deploy publishes it at `https://space-radar.<your-subdomain>.workers.dev`.
+
+Three ways, in order of least setup:
+
+**From your machine.** Needs a Cloudflare account and nothing else:
+
 ```bash
 cd space-radar
+npx wrangler login     # opens a browser, once
 npm run deploy
 ```
 
-`wrangler.jsonc` here is deliberately separate from the repository-root one, which belongs
-to the unrelated Crime Tracker Worker in this repo.
+**From GitHub Actions.** `.github/workflows/deploy-space-radar.yml` runs the tests, the
+typecheck and the build, then deploys. It is `workflow_dispatch` only — a push to a branch
+should not publish anything — so run it from the Actions tab. One-time setup: add two
+repository secrets, `CLOUDFLARE_API_TOKEN` (create one with the "Edit Cloudflare Workers"
+template at <https://dash.cloudflare.com/profile/api-tokens>) and `CLOUDFLARE_ACCOUNT_ID`.
+Tick **dry run** on the first go to validate without publishing.
+
+**From Cloudflare Workers Builds.** Connect this repository as a *second* Workers project
+(the first being Crime Tracker) with:
+
+| Setting | Value |
+|---|---|
+| Root directory | `space-radar` |
+| Build command | `npm ci && npm run build` |
+| Deploy command | `npx wrangler deploy` |
+
+The build must run `npm run build` rather than `astro build` directly: the post-build step
+writes `dist/.assetsignore`, without which wrangler rejects the deploy for trying to upload
+the Astro adapter's server bundle as a public asset.
+
+No secrets are needed for the app to work — all four upstreams are keyless. If you later
+add one that is not, it goes in a Worker secret, never a var:
+
+```bash
+npx wrangler secret put NASA_API_KEY
+```
 
 ## Testing
 

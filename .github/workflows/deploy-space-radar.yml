@@ -1,0 +1,72 @@
+# Deploy SPACE RADAR to Cloudflare Workers.
+#
+# Manual trigger only (`workflow_dispatch`): this repository holds two unrelated apps, and
+# a push to a feature branch should not publish either of them. Run it from the Actions
+# tab, or with `gh workflow run deploy-space-radar.yml`.
+#
+# ONE-TIME SETUP
+#   1. Create a Cloudflare API token with the "Edit Cloudflare Workers" template:
+#      https://dash.cloudflare.com/profile/api-tokens
+#   2. Add it to this repository as the secret CLOUDFLARE_API_TOKEN
+#      (Settings -> Secrets and variables -> Actions).
+#   3. Add your account ID as the secret CLOUDFLARE_ACCOUNT_ID
+#      (it is in the URL of your Cloudflare dashboard, and on the Workers overview page).
+#
+# The Worker is named `space-radar` in space-radar/wrangler.jsonc, so the first successful
+# run publishes it at https://space-radar.<your-subdomain>.workers.dev.
+
+name: Deploy SPACE RADAR
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and validate without publishing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-space-radar
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: space-radar
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: space-radar/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # Gate the deploy on the physics actually being right. These tests check the
+      # ephemerides against published values and SGP4 against its verification vectors,
+      # so a regression here means the app would be showing wrong positions.
+      - name: Test
+        run: npm test
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: space-radar
+          command: ${{ inputs.dry_run && 'deploy --dry-run' || 'deploy' }}
