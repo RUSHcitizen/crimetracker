@@ -133,6 +133,7 @@ export class Overlay {
   draw(opts: {
     selectedId: string | null;
     trackedId: string | null;
+    hoverId: string | null;
     chase: boolean;
     time: number;
     labelBudget: number;
@@ -164,7 +165,7 @@ export class Overlay {
     for (const m of sorted) {
       const selected = m.object.object.id === opts.selectedId;
       const tracked = m.object.object.id === opts.trackedId;
-      this.drawGlyph(m, selected, tracked);
+      this.drawGlyph(m, selected, tracked, m.object.object.id === opts.hoverId);
     }
 
     if (opts.showLabels) {
@@ -198,7 +199,7 @@ export class Overlay {
 
   // -------------------------------------------------------------------------
 
-  private drawGlyph(m: Marker, selected: boolean, tracked: boolean): void {
+  private drawGlyph(m: Marker, selected: boolean, tracked: boolean, hovered = false): void {
     const { ctx } = this;
     const o = m.object.object;
     const color = o.color;
@@ -210,7 +211,7 @@ export class Overlay {
     ctx.lineWidth = 1;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
-    ctx.globalAlpha = bright ? 1 : o.kind === 'satellite' ? 0.55 : 0.82;
+    ctx.globalAlpha = bright || hovered ? 1 : o.kind === 'satellite' ? 0.55 : 0.82;
 
     // The glyph vocabulary: every class of object reads differently at a glance.
     switch (o.kind) {
@@ -286,6 +287,15 @@ export class Overlay {
         ctx.arc(0, 0, 2, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+
+    if (hovered && !selected) {
+      // A light ring, not a bracket: enough to say "this is what you would select".
+      ctx.globalAlpha = 0.55;
+      ctx.strokeStyle = STYLE.text;
+      ctx.beginPath();
+      ctx.arc(0, 0, Math.max(12, r + 9), 0, Math.PI * 2);
+      ctx.stroke();
     }
 
     if (selected) {

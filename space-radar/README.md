@@ -26,6 +26,7 @@ npm run deploy       # Cloudflare Workers, via wrangler
 | **Select** | Tap any object for a compact readout: distance from Earth and Sun, velocity, signal delay, orbital elements, status — and where every number came from. |
 | **Track / Chase** | `TRACK` locks the camera to an object and draws its trajectory. `CHASE` drops you alongside it and makes it the centre of the world. |
 | **Time** | A logarithmic scrubber reaching ±50 years, rate steps from real time to a year per second, and jump buttons. Everything moves. |
+| **Time travel** | `TIME TRAVEL` on an object derives the rate from *its own* orbital period, so one orbit takes about twenty seconds — 18.7 M× for Jupiter, 118 k× for the Moon. An object on an open orbit gets a year per second and is told it never closes. |
 | **Surprise me** | Picks something genuinely interesting, flies there, and tells you something true about it — measured from the current state, not written down in advance. |
 | **Missions** | Eleven challenges generated from live measurements. "Find the spacecraft farthest from Earth" is answered by measuring, so it is verified honestly and changes as time moves. Progress is local; no account. |
 | **What if** | Move the Earth, move the Moon, change an orbital velocity, change the Sun's mass. Exact two-body consequences, clearly labelled as simulation, with the limits of the model stated. |
@@ -148,6 +149,12 @@ lands in the middle of what is actually *visible*. (Note for anyone touching thi
 the *narrower* of the two fields of view. On a portrait phone the horizontal FOV is less
 than half the vertical one, and framing by the vertical alone puts everything interesting
 off the left and right edges.
+
+**One discovery on first visit.** Three seconds after the opening camera move lands, the
+app fires a single `SURPRISE ME` by itself, once ever. Not a landing page and not a tutorial
+— the instrument is already running behind it. It is there because the loop of this thing is
+"press the button, find something strange, press it again", and the fastest way to teach
+that is to do it once.
 
 **Analytic trails.** The trajectory trail is sampled backwards from the ephemeris, not
 accumulated from past frames. Accumulating breaks the moment you scrub, jump or reverse

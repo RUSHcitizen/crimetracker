@@ -70,6 +70,7 @@ export default function App() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [progress, setProgress] = useState<MissionProgress>({ completed: [], active: null });
   const [justCompleted, setJustCompleted] = useState<Mission | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // ---------------------------------------------------------------- engine
 
@@ -223,6 +224,13 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [justCompleted]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 5200);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+
   const updateProgress = useCallback((p: MissionProgress) => {
     setProgress(p);
     saveProgress(p);
@@ -239,6 +247,34 @@ export default function App() {
     sound.play('discover');
     engine.flyTo(found.objectId, found.distanceKm ? { distanceKm: found.distanceKm } : {});
   }, [engine, discovery]);
+
+  /**
+   * First visit only: fire one discovery once the opening camera move has landed.
+   *
+   * Not a landing page and not a tutorial — the app is already running behind it. It is
+   * there because the core loop of this thing is "press the button, find something
+   * strange, press it again", and the fastest way to teach that is to do it once.
+   */
+  useEffect(() => {
+    if (!engine) return;
+    let seen = true;
+    try {
+      seen = localStorage.getItem('space-radar.seen.v1') === 'yes';
+    } catch {
+      seen = true;
+    }
+    if (seen) return;
+
+    const timer = setTimeout(() => {
+      surprise();
+      try {
+        localStorage.setItem('space-radar.seen.v1', 'yes');
+      } catch {
+        /* not persisting just means it happens again next time */
+      }
+    }, 3400);
+    return () => clearTimeout(timer);
+  }, [engine, surprise]);
 
   const pick = useCallback(
     (id: string) => {
@@ -313,6 +349,12 @@ export default function App() {
       </div>
 
       <div class="bottom" ref={bottomRef}>
+        {notice ? (
+          <div class="notice" role="status" onClick={() => setNotice(null)}>
+            {notice}
+          </div>
+        ) : null}
+
       {justCompleted ? (
         <div class="discovery" style={{ borderLeftColor: 'var(--good)' }} role="status">
           <div class="dh" style={{ color: 'var(--good)' }}>{justCompleted.code} COMPLETE — {justCompleted.title}</div>
@@ -356,7 +398,11 @@ export default function App() {
             onToggleTrajectory={() => toggleLayer('trajectory', !telemetry.layers.trajectory)}
             onTimeTravel={() => {
               setShowTime(true);
-              engine?.clock.setRate(3600);
+              const result = engine?.timeTravelForSelection();
+              if (result) {
+                sound.play('zoom');
+                setNotice(`TIME TRAVEL — ${result.description}`);
+              }
             }}
           />
         ) : null}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { formatOffset, formatUtc } from '../lib/astro/time';
+import { formatOffset, formatRate, formatUtc } from '../lib/astro/time';
 import { RATE_STEPS } from '../lib/sim/clock';
 import type { Telemetry } from '../lib/render/engine';
 
@@ -100,7 +100,9 @@ export function TimeBar(props: {
           {t.live ? 'LIVE' : formatOffset(t.offsetDays)}
         </span>
         <span style={{ flex: 1 }} />
-        <span>{t.live ? 'REAL TIME' : (reverse ? '◀ ' : '') + (RATE_LABEL[magnitude] ?? `${magnitude}×`)}</span>
+        {/* TIME TRAVEL derives a rate from the selected object's period, so this has to
+            render values that are not on the ladder. */}
+        <span>{t.live ? 'REAL TIME' : (reverse ? '◀ ' : '') + (RATE_LABEL[magnitude] ?? formatRate(magnitude))}</span>
       </div>
 
       <div class="scrub">

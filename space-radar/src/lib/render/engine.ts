@@ -107,6 +107,7 @@ export class Engine {
   private _chase = false;
   private _overlays: SandboxOverlay[] = [];
   private _dataNotice: string | null = null;
+  private _hoverId: string | null = null;
   /** Viewport pixels hidden behind UI. Set by the shell as panels open and close. */
   private insets = { top: 0, bottom: 0 };
   private overlayInsets = { top: 0, bottom: 0, right: 58 };
@@ -148,6 +149,17 @@ export class Engine {
       onTap: (x, y) => {
         const hit = this.overlay.pick(x, y);
         this.select(hit ? hit.object.id : null);
+      },
+      onHover: (x, y) => {
+        // Pointer devices only — there is no hover on a touchscreen, and the app never
+        // depends on this. It exists so a mouse gets the feedback a finger gets from the
+        // thing it is touching.
+        const hit = x < 0 ? null : this.overlay.pick(x, y, 26);
+        const id = hit ? hit.object.id : null;
+        if (id !== this._hoverId) {
+          this._hoverId = id;
+          this.container.style.cursor = id ? 'pointer' : '';
+        }
       },
       onDoubleTap: (x, y) => {
         const hit = this.overlay.pick(x, y);
@@ -271,6 +283,7 @@ export class Engine {
     this.overlay.draw({
       selectedId: this._selectedId,
       trackedId: this._trackedId,
+      hoverId: this._hoverId,
       chase: this._chase,
       time: now,
       // Fewer labels on a small screen, and fewer again when zoomed right out.
@@ -694,6 +707,42 @@ export class Engine {
   goLive(): void {
     this.clock.goLive();
     this.publish();
+  }
+
+  /**
+   * Set a time rate matched to the selected object, so one orbit takes about twenty
+   * seconds of real time.
+   *
+   * A fixed "1 hour per second" is useless for Jupiter and absurd for the ISS. Deriving
+   * the rate from the object's own period means TIME TRAVEL always does the interesting
+   * thing: tap it on Jupiter and watch a twelve-year orbit close; tap it on the ISS and
+   * watch it go round.
+   */
+  timeTravelForSelection(): { rate: number; description: string } | null {
+    const id = this._selectedId;
+    const obj = id ? this.world.get(id) : null;
+    if (!obj) return null;
+
+    const readout = id ? this.readout(id) : null;
+    const periodDaysValue = readout?.orbitalPeriodDays ?? null;
+
+    if (!periodDaysValue || periodDaysValue <= 0) {
+      // No closed orbit — an escaping probe or an unbound body. A year per second makes
+      // its motion visible without pretending it is periodic.
+      this.clock.setRate(31_557_600);
+      this.layers.trajectory = true;
+      this.publish();
+      return { rate: 31_557_600, description: '1 year per second — this orbit never closes' };
+    }
+
+    const rate = (periodDaysValue * 86_400) / 20;
+    this.clock.setRate(rate);
+    this.layers.trajectory = true;
+    this.publish();
+    return {
+      rate,
+      description: `one orbit of ${obj.name} every ~20 seconds`,
+    };
   }
 
   get nowJd(): number {

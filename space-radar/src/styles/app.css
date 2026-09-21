@@ -1014,3 +1014,27 @@ body {
   -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 22px), transparent 100%);
   mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 22px), transparent 100%);
 }
+
+/*
+ * A transient one-line acknowledgement, in the panel stack so it cannot cover the dock.
+ * Used where an action's effect is real but off-screen — setting a time rate derived from
+ * the selected object's orbital period, for instance.
+ */
+.notice {
+  margin: 0 8px 8px;
+  padding: 9px 11px;
+  border: 1px solid var(--hairline);
+  border-left: 2px solid var(--cyan);
+  border-radius: 3px;
+  background: var(--panel-solid);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  cursor: pointer;
+  animation: disc-in 0.24s var(--ease);
+}
+
+@media (min-width: 900px) {
+  .notice { margin: 0 0 1px; border-radius: 0; }
+}

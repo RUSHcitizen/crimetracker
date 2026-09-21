@@ -23,6 +23,8 @@ export interface GestureHandlers {
   onDoubleTap(x: number, y: number): void;
   /** Fired on first contact so the app can cancel any camera transition in flight. */
   onInteractStart(): void;
+  /** Pointer devices only. `x < 0` means the pointer left the surface. */
+  onHover(x: number, y: number): void;
 }
 
 interface Pt {
@@ -56,6 +58,8 @@ export class GestureController {
     el.addEventListener('pointercancel', this.onUp, { passive: false });
     el.addEventListener('wheel', this.onWheel, { passive: false });
     el.addEventListener('contextmenu', this.onContextMenu);
+    el.addEventListener('pointermove', this.onHoverMove, { passive: true });
+    el.addEventListener('pointerleave', this.onHoverLeave, { passive: true });
   }
 
   dispose(): void {
@@ -68,10 +72,22 @@ export class GestureController {
     el.removeEventListener('pointercancel', this.onUp);
     el.removeEventListener('wheel', this.onWheel);
     el.removeEventListener('contextmenu', this.onContextMenu);
+    el.removeEventListener('pointermove', this.onHoverMove);
+    el.removeEventListener('pointerleave', this.onHoverLeave);
   }
 
   private onContextMenu = (e: Event): void => {
     e.preventDefault();
+  };
+
+  private onHoverMove = (e: PointerEvent): void => {
+    if (e.pointerType === 'touch' || this.pointers.size > 0) return;
+    const p = this.local(e);
+    this.handlers.onHover(p.x, p.y);
+  };
+
+  private onHoverLeave = (): void => {
+    this.handlers.onHover(-1, -1);
   };
 
   private local(e: PointerEvent): { x: number; y: number } {
