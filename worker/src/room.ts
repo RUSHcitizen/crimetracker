@@ -2,7 +2,6 @@ import { DurableObject } from 'cloudflare:workers';
 import {
   buildPollUrl,
   CAMERA_USE_NOTICE,
-  createRng,
   detectPatterns,
   findCatalogSource,
   IncidentRepository,
@@ -13,10 +12,7 @@ import {
   mapWsdotCameras,
   parseOpenMhzSpec,
   parseTimestamp,
-  modeSchema,
   normalizeIncident,
-  SimulationGenerator,
-  type AppMode,
   type Incident,
   type IncidentQuery,
   type PatternCluster,
@@ -32,29 +28,18 @@ import {
 import {
   loadWorkerConfig,
   publicWorkerConfig,
-  resolveStartupMode,
-  shouldPrimeSimulation,
   type Env,
   type WorkerConfig,
 } from './config.js';
 import { migrate } from './driver.js';
+import { BriefService, createBriefGenerator } from './brief.js';
 
-const SIMULATION_DESCRIPTOR: SourceDescriptor = {
-  id: 'simulation',
-  name: 'Simulation Engine',
-  kind: 'simulation',
-  note: 'Fictional incidents generated locally. Not real events, not derived from any feed.',
-  url: null,
-};
-
-/** How often the alarm fires. Simulation and feed polling are both driven from it. */
+/** How often the alarm fires. Feed polling is driven from it. */
 const TICK_MS = 2_000;
 const SNAPSHOT_SIZE = 2500;
 
-/** What survives eviction. `configMode` is what `MODE` said when `mode` was chosen. */
+/** What survives eviction. */
 interface PersistedMeta {
-  readonly mode: AppMode;
-  readonly configMode?: AppMode;
   readonly accepted: number;
   readonly rejected: number;
 }
@@ -101,32 +86,24 @@ interface SourceRuntime {
 export class TrackerRoom extends DurableObject<Env> {
   readonly #repo: IncidentRepository;
   readonly #config: WorkerConfig;
-  #generator: SimulationGenerator;
   #patterns: PatternCluster[] = [];
   #sources = new Map<string, SourceRuntime>();
-  #mode: AppMode;
   #accepted = 0;
   #rejected = 0;
-  #nextSimAt = 0;
   #booted = false;
-  #simulationPrimed = false;
   #seenFeedIds = new Set<string>();
   #cameras: CameraDirectory | null = null;
   #camerasAtMs = 0;
   #camerasMessage: string | null = null;
   /** True only when a refresh failed, not merely when records were filtered out. */
   #camerasFailed = false;
+  readonly #briefs: BriefService;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#config = loadWorkerConfig(env);
-    this.#mode = this.#config.mode;
     this.#repo = new IncidentRepository(migrate(ctx.storage.sql));
-    this.#generator = new SimulationGenerator(
-      this.#config.simulation.seed ? { seed: this.#config.simulation.seed } : {},
-    );
-
-    this.#registerSource(SIMULATION_DESCRIPTOR);
+    this.#briefs = new BriefService(createBriefGenerator(this.#config));
 
     // Catalogued real agency feeds, selected by id.
     for (const id of this.#config.sources) {
@@ -186,8 +163,6 @@ export class TrackerRoom extends DurableObject<Env> {
       if (saved) {
         this.#accepted = saved.accepted;
         this.#rejected = saved.rejected;
-        // A runtime switch survives eviction; a changed deployment MODE overrides it.
-        this.#mode = resolveStartupMode(saved, this.#config.mode);
       }
       this.#booted = (await ctx.storage.get<boolean>('booted')) ?? false;
     });
@@ -206,7 +181,6 @@ export class TrackerRoom extends DurableObject<Env> {
       case 'GET /api/health':
         return json({
           status: 'ok',
-          mode: this.#mode,
           serverTime: new Date().toISOString(),
           incidents: this.#repo.countIncidents(),
           counters: { accepted: this.#accepted, rejected: this.#rejected },
@@ -214,7 +188,7 @@ export class TrackerRoom extends DurableObject<Env> {
         });
 
       case 'GET /api/config':
-        return json(publicWorkerConfig({ ...this.#config, mode: this.#mode }));
+        return json(publicWorkerConfig(this.#config));
 
       case 'GET /api/taxonomy':
         return json({ types: Object.values(INCIDENT_TYPE_META) });
@@ -236,20 +210,23 @@ export class TrackerRoom extends DurableObject<Env> {
         });
 
       case 'GET /api/sources':
-        return json({ sources: this.#sourceStatuses(), mode: this.#mode });
+        return json({ sources: this.#sourceStatuses() });
 
       case 'GET /api/cameras':
         return this.#handleCameras();
-
-      case 'POST /api/mode':
-        return this.#handleMode(request);
     }
 
     if (request.method === 'GET' && url.pathname.startsWith('/api/incidents/')) {
-      const id = decodeURIComponent(url.pathname.slice('/api/incidents/'.length));
+      const rest = decodeURIComponent(url.pathname.slice('/api/incidents/'.length));
+      const wantsBrief = rest.endsWith('/brief');
+      const id = wantsBrief ? rest.slice(0, -'/brief'.length) : rest;
       if (!id || id.length > 120) return json({ error: 'invalid-id' }, 400);
+
       const incident = this.#repo.getIncident(id);
-      return incident ? json({ incident }) : json({ error: 'not-found' }, 404);
+      if (!incident) return json({ error: 'not-found' }, 404);
+      if (!wantsBrief) return json({ incident });
+
+      return json({ brief: await this.#briefs.briefFor(incident), incidentId: incident.id });
     }
 
     return json({ error: 'not-found' }, 404);
@@ -271,45 +248,6 @@ export class TrackerRoom extends DurableObject<Env> {
     return json({ incidents, count: incidents.length });
   }
 
-  async #handleMode(request: Request): Promise<Response> {
-    const body = await request.json().catch(() => null);
-    const parsed = modeSchema.safeParse(body);
-    if (!parsed.success) return json({ error: 'invalid-mode' }, 400);
-
-    const target = parsed.data.mode;
-    if (target === this.#mode) return json({ mode: this.#mode });
-
-    // Same rule as the Node server: a mode nothing can serve is refused, never displayed.
-    const canServe =
-      target === 'simulation'
-        ? this.#sources.has('simulation')
-        : [...this.#sources.values()].some((s) => s.descriptor.kind !== 'simulation');
-
-    if (!canServe) {
-      return json(
-        {
-          error: 'mode-unavailable',
-          reason:
-            target === 'live'
-              ? 'No live source is configured. Set FEED_URL to connect a publicly accessible feed.'
-              : 'The simulation engine is not available in this deployment.',
-          mode: this.#mode,
-        },
-        409,
-      );
-    }
-
-    this.#mode = target;
-    this.#activateSimulation();
-    for (const source of this.#sources.values()) {
-      const belongs = (source.descriptor.kind === 'simulation' ? 'simulation' : 'live') === target;
-      source.state = belongs ? 'online' : 'stopped';
-    }
-    await this.#persistMeta();
-    this.#broadcast({ type: 'mode', mode: this.#mode });
-    this.#broadcast({ type: 'sources', sources: this.#sourceStatuses() });
-    return json({ mode: this.#mode });
-  }
 
   /* --------------------------------- realtime -------------------------------- */
 
@@ -326,7 +264,6 @@ export class TrackerRoom extends DurableObject<Env> {
     void this.#ensureStarted().then(() => {
       const snapshot: SnapshotFrame = {
         type: 'snapshot',
-        mode: this.#mode,
         serverTime: new Date().toISOString(),
         incidents: this.#repo.queryIncidents({ limit: SNAPSHOT_SIZE }),
         patterns: this.#patterns,
@@ -372,47 +309,21 @@ export class TrackerRoom extends DurableObject<Env> {
     if (!this.#booted) {
       this.#booted = true;
       await this.ctx.storage.put('booted', true);
-      this.#activateSimulation();
       this.runAnalysis();
     }
     const existing = await this.ctx.storage.getAlarm();
     if (existing === null) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
   }
 
-  /**
-   * Backfill fictional history, once, and only while simulation is the active mode.
-   *
-   * Doing this unconditionally at boot would fill a LIVE deployment with thousands of
-   * invented records the moment it started — the exact thing the mode indicator exists to
-   * prevent. Switching into simulation later primes it then instead.
-   */
-  #activateSimulation(): void {
-    if (!shouldPrimeSimulation(this.#mode, this.#simulationPrimed, this.#config.simulation.backfill)) {
-      return;
-    }
-    this.#simulationPrimed = true;
-    this.#backfill();
-  }
 
   override async alarm(): Promise<void> {
     const now = Date.now();
 
-    if (this.#mode === 'simulation' && this.#sources.get('simulation')?.state === 'online') {
-      if (this.#nextSimAt === 0) this.#nextSimAt = now;
-      while (this.#nextSimAt <= now) {
-        this.#emitSimulated(new Date(this.#nextSimAt));
-        this.#nextSimAt += this.#generator.nextInterval(this.#config.simulation.intervalSeconds) * 1000;
-      }
-    }
-
-    if (this.#mode === 'live') {
-      for (const runtime of this.#sources.values()) {
-        if (runtime.descriptor.kind === 'simulation') continue;
-        if (!runtime.pollable) continue;
-        if (runtime.state === 'stopped' || now < runtime.nextPollAt) continue;
-        runtime.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
-        await this.#pollFeed(runtime);
-      }
+    for (const runtime of this.#sources.values()) {
+      if (!runtime.pollable) continue;
+      if (runtime.state === 'stopped' || now < runtime.nextPollAt) continue;
+      runtime.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
+      await this.#pollFeed(runtime);
     }
 
     this.runAnalysis();
@@ -444,43 +355,6 @@ export class TrackerRoom extends DurableObject<Env> {
       this.#broadcast({ type: 'incidents', incidents: accepted });
     }
     return accepted;
-  }
-
-  #emitSimulated(at: Date): void {
-    // Occasional bursts are what make pattern detection worth having.
-    const burst = this.#rollBurst();
-    const records = burst
-      ? this.#generator.generateBurst(at)
-      : [this.#generator.generate(at)];
-    this.#ingest(SIMULATION_DESCRIPTOR, records);
-  }
-
-  #rollBurst(): boolean {
-    return Math.random() < 0.06;
-  }
-
-  #backfill(): void {
-    const { backfill, backfillHours } = this.#config.simulation;
-    const now = Date.now();
-    const spanMs = backfillHours * 3_600_000;
-    const rng = createRng(this.#config.simulation.seed ?? 'worker-backfill');
-    const events: RawIncident[] = [];
-
-    for (let i = 0; i < backfill; i += 1) {
-      const fraction = rng.next() ** 1.25;
-      events.push(this.#generator.generate(new Date(now - fraction * spanMs)));
-    }
-    for (let i = 0; i < Math.max(2, Math.round(backfill / 600)); i += 1) {
-      events.push(...this.#generator.generateBurst(new Date(now - rng.next() * spanMs)));
-    }
-    // Bursts inside the detection window, so the interface has something to show at once.
-    for (let i = 0; i < 3; i += 1) {
-      const at = new Date(now - (4 + rng.next() * 18) * 60_000);
-      events.push(...this.#generator.generateBurst(at, 7 + Math.floor(rng.next() * 3)));
-    }
-
-    events.sort((a, b) => String(a.timestamp).localeCompare(String(b.timestamp)));
-    this.#ingest(SIMULATION_DESCRIPTOR, events);
   }
 
   async #pollFeed(runtime: SourceRuntime): Promise<void> {
@@ -695,12 +569,11 @@ export class TrackerRoom extends DurableObject<Env> {
 
   #registerSource(descriptor: SourceDescriptor, catalog?: CatalogSource): SourceRuntime {
     this.#repo.upsertSource(descriptor);
-    const belongs = (descriptor.kind === 'simulation' ? 'simulation' : 'live') === this.#config.mode;
     const runtime: SourceRuntime = {
       descriptor,
       catalog,
       watermark: null,
-      state: belongs ? 'online' : 'stopped',
+      state: 'online',
       ingested: 0,
       rejected: 0,
       lastEventAt: null,
@@ -731,13 +604,7 @@ export class TrackerRoom extends DurableObject<Env> {
   }
 
   async #persistMeta(): Promise<void> {
-    const meta: PersistedMeta = {
-      mode: this.#mode,
-      // Recorded so a later change to the deployment's MODE var can be recognised.
-      configMode: this.#config.mode,
-      accepted: this.#accepted,
-      rejected: this.#rejected,
-    };
+    const meta: PersistedMeta = { accepted: this.#accepted, rejected: this.#rejected };
     await this.ctx.storage.put('meta', meta);
   }
 }

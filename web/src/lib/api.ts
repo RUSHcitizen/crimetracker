@@ -1,4 +1,4 @@
-import type { CameraSite, Incident, IncidentType, AppMode } from '@crimetracker/shared';
+import type { CameraSite, Incident, IncidentType } from '@crimetracker/shared';
 
 /**
  * REST helpers. Everything is same-origin (the dev server proxies to the API), so no
@@ -49,38 +49,6 @@ export async function fetchIncident(id: string, signal?: AbortSignal): Promise<I
   }
 }
 
-export type ModeChange =
-  | { ok: true; mode: AppMode }
-  | { ok: false; reason: string; mode: AppMode | null };
-
-/**
- * Request a mode change.
- *
- * The server refuses (409) when nothing could serve the requested mode. That refusal is
- * returned rather than swallowed: showing a LIVE label the server did not agree to would
- * defeat the point of the indicator.
- */
-export async function setServerMode(mode: AppMode): Promise<ModeChange> {
-  try {
-    const response = await fetch('/api/mode', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ mode }),
-    });
-    const data = (await response.json().catch(() => null)) as
-      | { mode?: AppMode; reason?: string }
-      | null;
-
-    if (response.ok && data?.mode) return { ok: true, mode: data.mode };
-    return {
-      ok: false,
-      reason: data?.reason ?? `Mode change refused (HTTP ${response.status}).`,
-      mode: data?.mode ?? null,
-    };
-  } catch {
-    return { ok: false, reason: 'Could not reach the server.', mode: null };
-  }
-}
 
 export interface CameraResponse {
   readonly configured: boolean;
@@ -105,4 +73,21 @@ export interface CameraResponse {
  */
 export async function fetchCameras(signal?: AbortSignal): Promise<CameraResponse> {
   return getJson<CameraResponse>('/api/cameras', signal);
+}
+
+export interface IncidentBrief {
+  readonly text: string;
+  /** `derived` = composed from the record; `ai-inferred` = written by a model. */
+  readonly origin: 'derived' | 'ai-inferred';
+  readonly generatorId: string;
+  readonly generatedAt: string;
+}
+
+/** Fetch the spoken-form brief for one incident. Generated on demand and cached server-side. */
+export async function fetchBrief(id: string, signal?: AbortSignal): Promise<IncidentBrief> {
+  const data = await getJson<{ brief: IncidentBrief }>(
+    `/api/incidents/${encodeURIComponent(id)}/brief`,
+    signal,
+  );
+  return data.brief;
 }

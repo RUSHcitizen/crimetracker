@@ -2,7 +2,6 @@ import {
   DEFAULT_CAMERA_IMAGE_HOSTS,
   requiredSourceKeys,
   WASHINGTON_BBOX,
-  type AppMode,
   type BBox,
 } from '@crimetracker/shared';
 
@@ -17,11 +16,6 @@ export interface Env {
   readonly TRACKER: DurableObjectNamespace;
   readonly ASSETS: Fetcher;
 
-  readonly MODE?: string;
-  readonly SIM_INTERVAL_SECONDS?: string;
-  readonly SIM_SEED?: string;
-  readonly SIM_BACKFILL?: string;
-  readonly SIM_BACKFILL_HOURS?: string;
   readonly RETENTION_HOURS?: string;
 
   readonly SOURCES?: string;
@@ -65,7 +59,6 @@ export interface FeedFieldMap {
 }
 
 export interface WorkerConfig {
-  readonly mode: AppMode;
   /** Catalogued real feeds to run, by id. */
   readonly sources: readonly string[];
   /** Access keys for the configured sources, by the variable each one declares. */
@@ -79,12 +72,6 @@ export interface WorkerConfig {
   };
   readonly region: BBox;
   readonly retentionHours: number;
-  readonly simulation: {
-    readonly intervalSeconds: number;
-    readonly seed: string | null;
-    readonly backfill: number;
-    readonly backfillHours: number;
-  };
   readonly feed: {
     readonly enabled: boolean;
     readonly url: string;
@@ -125,7 +112,6 @@ export function loadWorkerConfig(env: Env): WorkerConfig {
   const cameraCode = str(env.CAMERAS_ACCESS_CODE) || str(env.WSDOT_ACCESS_CODE);
 
   return {
-    mode: str(env.MODE, 'simulation').toLowerCase() === 'live' ? 'live' : 'simulation',
     sources,
     sourceKeys: readSourceKeys(sources, env),
     cameras: {
@@ -145,12 +131,6 @@ export function loadWorkerConfig(env: Env): WorkerConfig {
     },
     region: WASHINGTON_BBOX,
     retentionHours: num(env.RETENTION_HOURS, 168),
-    simulation: {
-      intervalSeconds: Math.max(1, num(env.SIM_INTERVAL_SECONDS, 20)),
-      seed: str(env.SIM_SEED) || null,
-      backfill: Math.max(0, num(env.SIM_BACKFILL, 2400)),
-      backfillHours: Math.max(1, num(env.SIM_BACKFILL_HOURS, 12)),
-    },
     feed: {
       enabled: feedUrl.length > 0,
       url: feedUrl,
@@ -184,7 +164,6 @@ export function loadWorkerConfig(env: Env): WorkerConfig {
 /** The only configuration the browser is allowed to see. Contains no secrets. */
 export function publicWorkerConfig(config: WorkerConfig) {
   return {
-    mode: config.mode,
     region: config.region,
     patterns: config.patterns,
     aiProvider: config.ai.provider,
@@ -210,48 +189,4 @@ function readSourceKeys(sources: readonly string[], env: Env): Record<string, st
     if (value) keys[keyEnv] = value;
   }
   return keys;
-}
-
-/**
- * Which mode a restored Durable Object should start in.
- *
- * Two things want to decide this, and they have to be told apart. A runtime switch
- * through `POST /api/mode` must survive the object being evicted, or the operator's
- * choice quietly reverts. But an operator who edits `MODE` in the deployment config and
- * redeploys has also made a deliberate choice, and it is the more recent one — if the
- * stored value simply won, that edit would appear to do nothing and the deployment would
- * sit in simulation while its configuration said live.
- *
- * So the resolution is: while the configured mode is unchanged, the stored runtime
- * choice stands; the moment it changes, the new configuration takes over.
- *
- * Extracted here because the rule is easy to get wrong and impossible to see from the
- * outside once it is wrong — the symptom is a deployment that ignores its own config.
- */
-export function resolveStartupMode(
-  saved: { mode: AppMode; configMode?: AppMode } | null | undefined,
-  configMode: AppMode,
-): AppMode {
-  if (!saved) return configMode;
-  // Objects stored before `configMode` was recorded: treat the config as authoritative
-  // rather than letting a value of unknown provenance pin the deployment.
-  if (saved.configMode === undefined) return configMode;
-  return saved.configMode === configMode ? saved.mode : configMode;
-}
-
-/**
- * Whether simulated history should be primed right now.
- *
- * Extracted so the rule is testable on its own: backfilling thousands of invented
- * records into a LIVE deployment is precisely what the mode indicator exists to prevent,
- * and the guard is easy to break by reordering the mode assignment around it.
- */
-export function shouldPrimeSimulation(
-  mode: AppMode,
-  alreadyPrimed: boolean,
-  backfillCount: number,
-): boolean {
-  if (mode !== 'simulation') return false;
-  if (alreadyPrimed) return false;
-  return backfillCount > 0;
 }

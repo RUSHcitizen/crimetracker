@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  loadWorkerConfig,
-  publicWorkerConfig,
-  resolveStartupMode,
-  type Env,
-} from '../src/config.js';
+import { loadWorkerConfig, publicWorkerConfig, type Env } from '../src/config.js';
 import { parseOpenMhzSpec } from '@crimetracker/shared';
 
 /**
@@ -15,29 +10,33 @@ import { parseOpenMhzSpec } from '@crimetracker/shared';
 const env = (over: Partial<Env> = {}): Env => ({ ...(over as Env) });
 
 describe('loadWorkerConfig', () => {
-  it('defaults to simulation with no vars set', () => {
+  it('defaults sensibly with no vars set', () => {
     const config = loadWorkerConfig(env());
-    expect(config.mode).toBe('simulation');
-    expect(config.simulation.intervalSeconds).toBe(20);
-    expect(config.simulation.backfill).toBe(2400);
+    expect(config.sources).toEqual([]);
     expect(config.feed.enabled).toBe(false);
     expect(config.ai.provider).toBe('heuristic');
     expect(config.patterns).toEqual({ windowMinutes: 45, epsKm: 0.9, minPoints: 5 });
   });
 
+  it('has no mode or simulation settings to read', () => {
+    // There is nothing to switch between: the Worker ingests published data or it
+    // ingests nothing. A leftover MODE var must not resurrect a concept that is gone.
+    const config = loadWorkerConfig(env({ MODE: 'simulation', SIM_BACKFILL: '2400' } as Env));
+    expect('mode' in config).toBe(false);
+    expect('simulation' in config).toBe(false);
+  });
+
   it('reads vars and coerces numbers', () => {
     const config = loadWorkerConfig(
       env({
-        MODE: 'live',
-        SIM_INTERVAL_SECONDS: '5',
+        SOURCES: 'seattle-fire-911, nws-alerts-wa',
         PATTERN_EPS_KM: '2.5',
         PATTERN_MIN_POINTS: '8',
         FEED_URL: 'https://data.example.gov/feed.json',
         FEED_POLL_SECONDS: '30',
       }),
     );
-    expect(config.mode).toBe('live');
-    expect(config.simulation.intervalSeconds).toBe(5);
+    expect(config.sources).toEqual(['seattle-fire-911', 'nws-alerts-wa']);
     expect(config.patterns.epsKm).toBe(2.5);
     expect(config.patterns.minPoints).toBe(8);
     expect(config.feed.enabled).toBe(true);
@@ -45,17 +44,10 @@ describe('loadWorkerConfig', () => {
   });
 
   it('clamps values that would break the pipeline', () => {
-    const config = loadWorkerConfig(
-      env({ SIM_INTERVAL_SECONDS: '0', FEED_POLL_SECONDS: '1', PATTERN_MIN_POINTS: '1' }),
-    );
-    expect(config.simulation.intervalSeconds).toBeGreaterThanOrEqual(1);
+    const config = loadWorkerConfig(env({ FEED_POLL_SECONDS: '1', PATTERN_MIN_POINTS: '1' }));
     // Never poll an upstream faster than every 15s.
     expect(config.feed.pollSeconds).toBeGreaterThanOrEqual(15);
     expect(config.patterns.minPoints).toBeGreaterThanOrEqual(3);
-  });
-
-  it('ignores an unrecognised mode rather than trusting it', () => {
-    expect(loadWorkerConfig(env({ MODE: 'chaos' })).mode).toBe('simulation');
   });
 
   it('ignores an unrecognised AI provider', () => {
@@ -83,25 +75,6 @@ describe('publicWorkerConfig', () => {
   });
 });
 
-describe('shouldPrimeSimulation', () => {
-  it('primes simulated history in simulation mode, once', async () => {
-    const { shouldPrimeSimulation } = await import('../src/config.js');
-    expect(shouldPrimeSimulation('simulation', false, 2400)).toBe(true);
-    expect(shouldPrimeSimulation('simulation', true, 2400)).toBe(false);
-  });
-
-  it('never primes it in live mode', async () => {
-    const { shouldPrimeSimulation } = await import('../src/config.js');
-    // The regression this guards: a LIVE deployment filling with invented records at boot.
-    expect(shouldPrimeSimulation('live', false, 2400)).toBe(false);
-    expect(shouldPrimeSimulation('live', true, 2400)).toBe(false);
-  });
-
-  it('respects a disabled backfill', async () => {
-    const { shouldPrimeSimulation } = await import('../src/config.js');
-    expect(shouldPrimeSimulation('simulation', false, 0)).toBe(false);
-  });
-});
 
 describe('sources the Worker cannot run', () => {
   it('recognises an OpenMHz spec so the room can report it rather than drop it', () => {
@@ -132,40 +105,3 @@ describe('sources the Worker cannot run', () => {
   });
 });
 
-describe('resolveStartupMode', () => {
-  it('uses the configured mode on a first boot', () => {
-    expect(resolveStartupMode(null, 'live')).toBe('live');
-    expect(resolveStartupMode(undefined, 'simulation')).toBe('simulation');
-  });
-
-  it('keeps a runtime switch across eviction while the config is unchanged', () => {
-    // The operator switched to simulation in the UI; a redeploy of the same config must
-    // not silently undo that.
-    expect(resolveStartupMode({ mode: 'simulation', configMode: 'live' }, 'live')).toBe(
-      'simulation',
-    );
-    expect(resolveStartupMode({ mode: 'live', configMode: 'simulation' }, 'simulation')).toBe(
-      'live',
-    );
-  });
-
-  it('lets a changed deployment MODE override the stored choice', () => {
-    /*
-     * The failure this prevents: setting MODE=live in wrangler.jsonc and redeploying,
-     * only for the stored "simulation" to win — leaving a deployment that ignores its own
-     * configuration with no visible reason why.
-     */
-    expect(resolveStartupMode({ mode: 'simulation', configMode: 'simulation' }, 'live')).toBe(
-      'live',
-    );
-    expect(resolveStartupMode({ mode: 'live', configMode: 'live' }, 'simulation')).toBe(
-      'simulation',
-    );
-  });
-
-  it('treats state stored before configMode existed as unauthoritative', () => {
-    // Objects written by an earlier build carry no provenance for their mode, so the
-    // configuration decides rather than a value of unknown origin pinning the deployment.
-    expect(resolveStartupMode({ mode: 'simulation' }, 'live')).toBe('live');
-  });
-});

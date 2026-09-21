@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type {
-  AppMode,
   CameraSite,
   Incident,
   IncidentType,
@@ -53,6 +52,13 @@ export interface UiState {
   /** Public roadway-camera overlay. Off by default — it is context, not incident data. */
   camerasVisible: boolean;
   soundEnabled: boolean;
+  /**
+   * Read each selected incident's brief aloud.
+   *
+   * Off by default, like every other sound here. A synthetic voice reading out crime
+   * reports is not something to start unasked.
+   */
+  voiceEnabled: boolean;
 }
 
 export type CameraState = 'idle' | 'loading' | 'ready' | 'unavailable';
@@ -64,7 +70,6 @@ interface TrackerState {
   patterns: PatternCluster[];
   stats: Stats | null;
   sources: SourceStatus[];
-  mode: AppMode;
   serverTime: string | null;
   /** Bumped whenever `incidents` changes identity — lets selectors memoize cheaply. */
   version: number;
@@ -113,7 +118,6 @@ interface TrackerState {
   setViewportBounds: (bounds: [number, number, number, number] | null) => void;
   setViewportZoom: (zoom: number) => void;
   setUi: (patch: Partial<UiState>) => void;
-  setMode: (mode: AppMode) => void;
   pruneArrivals: () => void;
   loadCameras: () => Promise<void>;
   selectCamera: (id: string | null) => void;
@@ -137,7 +141,6 @@ export const useTracker = create<TrackerState>((set, get) => ({
   patterns: [],
   stats: null,
   sources: [],
-  mode: 'simulation',
   serverTime: null,
   version: 0,
 
@@ -169,6 +172,7 @@ export const useTracker = create<TrackerState>((set, get) => ({
     patternsVisible: true,
     camerasVisible: false,
     soundEnabled: false,
+    voiceEnabled: false,
   },
 
   applyFrame: (frame) => {
@@ -183,7 +187,6 @@ export const useTracker = create<TrackerState>((set, get) => ({
           patterns: [...frame.patterns],
           stats: frame.stats,
           sources: [...frame.sources],
-          mode: frame.mode,
           serverTime: frame.serverTime,
           snapshotReceived: true,
           lastFrameAt: now,
@@ -235,9 +238,6 @@ export const useTracker = create<TrackerState>((set, get) => ({
       case 'sources':
         set({ sources: [...frame.sources], lastFrameAt: now });
         break;
-      case 'mode':
-        set({ mode: frame.mode, lastFrameAt: now });
-        break;
       case 'pulse':
         set({ serverTime: frame.serverTime, lastFrameAt: now });
         break;
@@ -279,8 +279,6 @@ export const useTracker = create<TrackerState>((set, get) => ({
   setViewportZoom: (viewportZoom) => set({ viewportZoom }),
 
   setUi: (patch) => set((state) => ({ ui: { ...state.ui, ...patch } })),
-
-  setMode: (mode) => set({ mode }),
 
   /**
    * Load the camera directory, once.

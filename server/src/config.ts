@@ -59,14 +59,7 @@ export interface Config {
   readonly corsOrigins: string[];
   readonly databasePath: string;
   readonly retentionHours: number;
-  readonly mode: 'live' | 'simulation';
   readonly region: BBox;
-  readonly simulation: {
-    readonly intervalSeconds: number;
-    readonly seed: string | null;
-    readonly backfill: number;
-    readonly backfillHours: number;
-  };
   /** Catalogued real feeds to run, by id. See `SOURCE_CATALOG`. */
   readonly sources: readonly string[];
   /** Point a catalogued source at a mirror or local stub. Empty in normal use. */
@@ -154,14 +147,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     corsOrigins: list('CORS_ORIGINS', ['http://localhost:5173', 'http://127.0.0.1:5173']),
     databasePath: str('DATABASE_PATH', './data/crimetracker.db'),
     retentionHours: num('RETENTION_HOURS', 168),
-    mode: str('MODE', 'simulation').toLowerCase() === 'live' ? 'live' : 'simulation',
     region: WASHINGTON_BBOX,
-    simulation: {
-      intervalSeconds: Math.max(0.5, num('SIM_INTERVAL_SECONDS', 20)),
-      seed: str('SIM_SEED') || null,
-      backfill: Math.max(0, num('SIM_BACKFILL', 2400)),
-      backfillHours: Math.max(1, num('SIM_BACKFILL_HOURS', 12)),
-    },
     sources,
     catalogOverrideUrl: str('CT_CATALOG_OVERRIDE_URL') || null,
     sourceKeys: readSourceKeys(sources, str),
@@ -236,7 +222,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 /** The only configuration the browser is allowed to see. Contains no secrets. */
 export function publicConfig(config: Config) {
   return {
-    mode: config.mode,
     region: config.region,
     patterns: config.patterns,
     aiProvider: config.ai.provider,

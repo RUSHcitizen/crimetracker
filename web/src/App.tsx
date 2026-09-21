@@ -12,13 +12,13 @@ import { CommandSearch } from './hud/CommandSearch.js';
 import { RealtimeClient } from './lib/realtime.js';
 import { useTracker } from './state/store.js';
 import { playTone } from './lib/sound.js';
+import { stopSpeaking } from './lib/speech.js';
 
 export default function App() {
   const ui = useTracker((s) => s.ui);
   const setUi = useTracker((s) => s.setUi);
   const connection = useTracker((s) => s.connection);
   const snapshotReceived = useTracker((s) => s.snapshotReceived);
-  const mode = useTracker((s) => s.mode);
   const clientRef = useRef<RealtimeClient | null>(null);
 
   /* --------------------------- realtime link ---------------------------- */
@@ -52,6 +52,7 @@ export default function App() {
 
       if (event.key === 'Escape') {
         const state = useTracker.getState();
+        stopSpeaking();
         if (state.ui.searchOpen) state.setUi({ searchOpen: false });
         else if (state.ui.statsOpen) state.setUi({ statsOpen: false });
         else if (state.selectedCameraId) state.selectCamera(null);
@@ -79,6 +80,14 @@ export default function App() {
           state.setUi({ camerasVisible: next });
           if (next) void state.loadCameras();
           else state.selectCamera(null);
+          break;
+        }
+        case 'v': {
+          const state = useTracker.getState();
+          const next = !state.ui.voiceEnabled;
+          state.setUi({ voiceEnabled: next });
+          // Turning it off mid-sentence must actually stop the sentence.
+          if (!next) stopSpeaking();
           break;
         }
         case '[':
@@ -123,7 +132,7 @@ export default function App() {
           <PositionNotice />
           <div className="hud__centerfoot">
             <MapControls />
-            <ModeBanner mode={mode} />
+            <SourceBanner />
           </div>
         </div>
 
@@ -194,16 +203,26 @@ function MapControls() {
 }
 
 /**
- * A standing, unmissable statement of what the operator is looking at. In simulation
- * mode this must never be subtle.
+ * A standing statement of what the operator is looking at.
+ *
+ * It says "public sources" rather than naming a mode because there is no other mode: the
+ * system ingests published public-safety data and has no way to invent an incident. The
+ * banner exists so that is never in question at a glance.
  */
-function ModeBanner({ mode }: { mode: 'live' | 'simulation' }) {
+function SourceBanner() {
+  const sources = useTracker((s) => s.sources);
+  const named = sources
+    .filter((source) => source.state === 'online')
+    .map((source) => source.name)
+    .slice(0, 3)
+    .join(' · ');
+
   return (
-    <div className={`modebanner modebanner--${mode}`}>
+    <div className="modebanner modebanner--live">
       <span className="modebanner__bar" />
       <span className="modebanner__text">
-        {mode === 'simulation'
-          ? 'SIMULATION — ALL INCIDENTS SHOWN ARE FICTIONAL AND GENERATED LOCALLY'
+        {named
+          ? `LIVE — ${named.toUpperCase()}`
           : 'LIVE — INCIDENTS FROM CONFIGURED PUBLIC SOURCES'}
       </span>
     </div>

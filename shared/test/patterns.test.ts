@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { detectPatterns, DEFAULT_PATTERN_OPTIONS } from '../src/patterns.js';
 import { haversineKm, offsetCoordinates } from '../src/geo.js';
-import { createRng } from '../src/rng.js';
+import { createRng } from './helpers/rng.js';
 import type { Incident, IncidentType } from '../src/index.js';
 
 const NOW = Date.parse('2026-09-20T12:00:00.000Z');
@@ -17,7 +17,7 @@ function incident(
     id,
     timestamp: new Date(NOW - minutesAgo * 60_000).toISOString(),
     ingestedAt: new Date(NOW - minutesAgo * 60_000).toISOString(),
-    source: { id: 'test', name: 'Test', kind: 'simulation', url: null },
+    source: { id: 'test', name: 'Test', kind: 'public-feed', url: null },
     incidentType: type,
     severity,
     description: `incident ${id}`,

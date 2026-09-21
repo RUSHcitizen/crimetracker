@@ -1,5 +1,4 @@
 import type {
-  AppMode,
   Incident,
   PatternCluster,
   ServerFrame,
@@ -27,7 +26,6 @@ export class RealtimeHub {
   #pendingStats: Stats | null = null;
   #pendingPatterns: readonly PatternCluster[] | null = null;
   #pendingSources: readonly SourceStatus[] | null = null;
-  #pendingMode: AppMode | null = null;
   #timer: NodeJS.Timeout | null = null;
 
   constructor(private readonly flushIntervalMs = 100) {}
@@ -82,10 +80,6 @@ export class RealtimeHub {
     this.#schedule();
   }
 
-  publishMode(mode: AppMode): void {
-    this.#pendingMode = mode;
-    this.#schedule();
-  }
 
   /** Heartbeat so clients can show connection health and detect a dead socket. */
   pulse(): void {
@@ -129,7 +123,6 @@ export class RealtimeHub {
     if (this.#pendingPatterns) this.#broadcast({ type: 'patterns', patterns: this.#pendingPatterns });
     if (this.#pendingStats) this.#broadcast({ type: 'stats', stats: this.#pendingStats });
     if (this.#pendingSources) this.#broadcast({ type: 'sources', sources: this.#pendingSources });
-    if (this.#pendingMode) this.#broadcast({ type: 'mode', mode: this.#pendingMode });
     this.#reset();
   }
 
@@ -139,7 +132,6 @@ export class RealtimeHub {
     this.#pendingStats = null;
     this.#pendingPatterns = null;
     this.#pendingSources = null;
-    this.#pendingMode = null;
   }
 
   #broadcast(frame: ServerFrame): void {

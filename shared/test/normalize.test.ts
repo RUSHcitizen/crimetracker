@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyExtraction, normalizeIncident } from '../src/normalize.js';
 import { incidentSchema, parseTimestamp } from '../src/schema.js';
+import { PROVENANCE_ORIGINS, SOURCE_KINDS } from '../src/taxonomy.js';
 import type { SourceDescriptor } from '../src/types.js';
 
 const SOURCE: SourceDescriptor = {
@@ -10,7 +11,6 @@ const SOURCE: SourceDescriptor = {
   note: 'unit test',
 };
 
-const SIM_SOURCE: SourceDescriptor = { ...SOURCE, id: 'sim', name: 'Sim', kind: 'simulation' };
 
 const NOW = Date.parse('2026-09-20T12:00:00.000Z');
 const RECENT = '2026-09-20T11:45:00.000Z';
@@ -172,15 +172,24 @@ describe('normalizeIncident', () => {
     expect(result.incident.confidence).toBeLessThanOrEqual(0.65);
   });
 
-  it('tags simulated sources so the UI can never present them as real', () => {
+  it('has no vocabulary for a fabricated incident', () => {
+    /*
+     * There is no `simulation` source kind and no `simulated` provenance origin: this
+     * system ingests published data and cannot generate an incident of its own. Pinning
+     * it here means reintroducing a generator would have to reintroduce the vocabulary
+     * first, in the open, rather than a fabricated record quietly passing validation.
+     */
+    expect(SOURCE_KINDS as readonly string[]).not.toContain('simulation');
+    expect(PROVENANCE_ORIGINS as readonly string[]).not.toContain('simulated');
+
     const result = ok(
       normalizeIncident(
         { timestamp: RECENT, description: 'Theft reported', coordinates: { lat: 47.6, lon: -122.3 } },
-        { source: SIM_SOURCE, now: NOW },
+        { source: SOURCE, now: NOW },
       ),
     );
-    expect(result.incident.source.kind).toBe('simulation');
-    expect(result.incident.provenance.description?.origin).toBe('simulated');
+    // A value the publisher stated is `source`; nothing else can produce one.
+    expect(result.incident.provenance.description?.origin).toBe('source');
   });
 
   it('derives ids from the external id when one is given, and is stable', () => {

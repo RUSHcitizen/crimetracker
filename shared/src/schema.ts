@@ -163,8 +163,6 @@ export const incidentQuerySchema = z.object({
   offset: z.coerce.number().min(0).max(1_000_000).optional(),
 });
 
-export const modeSchema = z.object({ mode: z.enum(['live', 'simulation']) });
-
 /**
  * Parse a timestamp from an untrusted source.
  *

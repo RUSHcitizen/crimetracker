@@ -7,6 +7,7 @@ import { openDatabase, resolveDatabasePath } from './db/database.js';
 import { createExtractor } from './extraction/index.js';
 import { registerRoutes } from './http/routes.js';
 import { WsdotCameraDirectory } from './cameras/directory.js';
+import { BriefService, createBriefGenerator } from './brief/index.js';
 import { registerWebsocket } from './http/ws.js';
 import { RealtimeHub } from './pipeline/hub.js';
 import { IngestionPipeline } from './pipeline/ingest.js';
@@ -88,7 +89,10 @@ async function main(): Promise<void> {
     : null;
   if (cameras) app.log.info('public roadway camera overlay enabled (WSDOT)');
 
-  await registerRoutes(app, { config, repository, pipeline, cameras });
+  const briefs = new BriefService(createBriefGenerator(config));
+  app.log.info(`brief generator: ${briefs.label}`);
+
+  await registerRoutes(app, { config, repository, pipeline, cameras, briefs });
   await registerWebsocket(app, { repository, pipeline, hub });
 
   /*
@@ -106,13 +110,13 @@ async function main(): Promise<void> {
   for (const warning of warnings) app.log.warn(warning);
   for (const source of sources) pipeline.register(source);
 
-  // Only the sources belonging to the configured mode are started.
-  if (!pipeline.canServe(config.mode)) {
+  if (!pipeline.hasSources) {
     app.log.error(
-      `MODE=${config.mode} was requested but no source can serve it. No incidents will arrive.`,
+      'No source is configured, so no incidents will arrive. Run `npm run sources` to ' +
+        'list the catalogued feeds and set SOURCES.',
     );
   }
-  await pipeline.applyMode(config.mode);
+  await pipeline.startAll();
 
   // First analysis pass so a client connecting immediately sees patterns and stats.
   pipeline.runAnalysis();
@@ -131,12 +135,12 @@ async function main(): Promise<void> {
   const pulseInterval = setInterval(() => hub.pulse(), 10_000);
   pulseInterval.unref();
 
+  app.log.info(`CRIME TRACKER server listening on http://${config.host}:${config.port}`);
   app.log.info(
-    `CRIME TRACKER server listening on http://${config.host}:${config.port} — mode: ${config.mode.toUpperCase()}`,
+    `ingesting from ${sources.length} published source(s): ${
+      sources.map((s) => s.descriptor.id).join(', ') || 'none'
+    }`,
   );
-  if (config.mode === 'simulation') {
-    app.log.info('SIMULATION MODE: all incidents are fictional and generated locally.');
-  }
 
   const shutdown = async (signal: string) => {
     app.log.info(`${signal} received — shutting down`);

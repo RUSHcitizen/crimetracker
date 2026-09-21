@@ -2,16 +2,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   IncidentRepository,
   normalizeIncident,
-  SimulationGenerator,
   type Incident,
   type SourceDescriptor,
 } from '@crimetracker/shared';
 import { openDatabase, type OpenedDatabase } from '../src/db/database.js';
+import { makeRaws } from './helpers/records.js';
 
 const SOURCE: SourceDescriptor = {
   id: 'repo-test',
   name: 'Repo Test',
-  kind: 'simulation',
+  kind: 'public-feed',
   note: 'unit test',
 };
 
@@ -28,15 +28,11 @@ afterEach(() => {
   db.close();
 });
 
-function seed(count: number, seedName = 'repo'): Incident[] {
-  const generator = new SimulationGenerator({ seed: seedName });
+function seed(count: number): Incident[] {
   const now = Date.now();
   const incidents: Incident[] = [];
-  for (let i = 0; i < count; i += 1) {
-    const result = normalizeIncident(generator.generate(new Date(now - i * 60_000)), {
-      source: SOURCE,
-      now,
-    });
+  for (const raw of makeRaws(count, now)) {
+    const result = normalizeIncident(raw, { source: SOURCE, now });
     if (!result.ok) continue;
     repo.insertIncident(result.incident);
     incidents.push(result.incident);

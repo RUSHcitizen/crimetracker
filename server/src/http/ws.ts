@@ -33,7 +33,6 @@ export async function registerWebsocket(app: FastifyInstance, deps: WsDeps): Pro
 
     const snapshot: SnapshotFrame = {
       type: 'snapshot',
-      mode: pipeline.mode,
       serverTime: new Date().toISOString(),
       incidents: repository.queryIncidents({ limit: snapshotSize }),
       patterns: pipeline.patterns,

@@ -2,18 +2,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cors from '@fastify/cors';
 import {
-  IncidentRepository, SimulationGenerator, type RawIncident, type SourceDescriptor, type SourceStatus } from '@crimetracker/shared';
+  IncidentRepository, type RawIncident, type SourceDescriptor, type SourceStatus } from '@crimetracker/shared';
 import { loadConfig } from '../src/config.js';
 import { openDatabase } from '../src/db/database.js';
 import { registerRoutes } from '../src/http/routes.js';
 import { RealtimeHub } from '../src/pipeline/hub.js';
 import { IngestionPipeline } from '../src/pipeline/ingest.js';
 import type { DataSource } from '../src/sources/types.js';
+import { makeRaws } from './helpers/records.js';
 
 const DESCRIPTOR: SourceDescriptor = {
   id: 'test-source',
   name: 'Test Source',
-  kind: 'simulation',
+  kind: 'public-feed',
   note: 'unit test',
 };
 
@@ -45,7 +46,7 @@ let repository: IncidentRepository;
 const source = new InertSource();
 
 beforeAll(async () => {
-  const config = { ...loadConfig(), databasePath: ':memory:', mode: 'simulation' as const };
+  const config = { ...loadConfig(), databasePath: ':memory:' };
   const db = openDatabase(':memory:');
   repository = new IncidentRepository(db.driver);
   repository.upsertSource(DESCRIPTOR);
@@ -60,16 +61,14 @@ beforeAll(async () => {
 
   app = Fastify({ logger: false });
   await app.register(cors, { origin: false });
+  // Registered so /api/sources has something to report; it produces nothing on its own.
+  pipeline.register(source);
   await registerRoutes(app, { config, repository, pipeline });
   await app.ready();
 
   // Seed a deterministic, known-good history.
-  const generator = new SimulationGenerator({ seed: 'api-test' });
   const now = Date.now();
-  const records: RawIncident[] = [];
-  for (let i = 0; i < 300; i += 1) {
-    records.push(generator.generate(new Date(now - i * 60_000)));
-  }
+  const records: RawIncident[] = [...makeRaws(300, now)];
   // An explicit, tight concentration so the pattern assertions do not depend on which
   // place the generator happened to pick.
   for (let i = 0; i < 9; i += 1) {
@@ -99,12 +98,13 @@ const get = async (url: string) => {
 };
 
 describe('GET /api/health', () => {
-  it('reports mode and counters', async () => {
+  it('reports counters and stored volume', async () => {
     const { status, body } = await get('/api/health');
     expect(status).toBe(200);
     expect(body.status).toBe('ok');
-    expect(body.mode).toBe('simulation');
     expect(body.incidents).toBeGreaterThan(0);
+    // No mode is reported because there is none to report.
+    expect(body.mode).toBeUndefined();
   });
 });
 
@@ -113,7 +113,8 @@ describe('GET /api/config', () => {
     const { body } = await get('/api/config');
     const serialized = JSON.stringify(body);
     expect(serialized).not.toMatch(/apiKey|api_key|AI_API_KEY|password|secret/i);
-    expect(body).toHaveProperty('mode');
+    // No mode is exposed because there is none: this system ingests published data.
+    expect(body).not.toHaveProperty('mode');
     expect(body).toHaveProperty('feedConfigured');
     // Booleans only — never a URL the browser could be pointed at.
     expect(typeof body.feedConfigured).toBe('boolean');
@@ -279,23 +280,19 @@ describe('GET /api/patterns', () => {
   });
 });
 
-describe('GET /api/sources and POST /api/mode', () => {
-  it('lists registered sources', async () => {
-    const { body } = await get('/api/sources');
-    expect(body.mode).toBe('simulation');
+describe('GET /api/sources', () => {
+  it('lists registered sources with their health', async () => {
+    const { status, body } = await get('/api/sources');
+    expect(status).toBe(200);
+    expect(Array.isArray(body.sources)).toBe(true);
+    expect(body.sources[0]).toMatchObject({ id: 'test-source', kind: 'public-feed' });
   });
 
-  it('refuses live mode when no live source is registered', async () => {
-    // This harness registers a simulation-kind source only, so switching to live would
-    // put a LIVE label over simulated data. The server must refuse instead.
-    const refused = await app.inject({ method: 'POST', url: '/api/mode', payload: { mode: 'live' } });
-    expect(refused.statusCode).toBe(409);
-    expect(pipeline.mode).toBe('simulation');
-  });
-
-  it('rejects an invalid mode', async () => {
-    const bad = await app.inject({ method: 'POST', url: '/api/mode', payload: { mode: 'chaos' } });
-    expect(bad.statusCode).toBe(400);
+  it('offers no way to switch into a fabricated mode', async () => {
+    // The endpoint is gone along with the simulation engine. A 404 here is the point:
+    // there is no request that puts this system into generating records of its own.
+    const gone = await app.inject({ method: 'POST', url: '/api/mode', payload: { mode: 'simulation' } });
+    expect(gone.statusCode).toBe(404);
   });
 });
 
@@ -341,14 +338,12 @@ describe('config loading', () => {
     const { loadConfig: load } = await import('../src/config.js');
     const custom = load({
       PORT: '9911',
-      MODE: 'live',
       PATTERN_EPS_KM: '3.5',
       CORS_ORIGINS: 'https://a.example,https://b.example',
       FEED_URL: 'https://data.example.gov/feed.json',
     } as NodeJS.ProcessEnv);
 
     expect(custom.port).toBe(9911);
-    expect(custom.mode).toBe('live');
     expect(custom.patterns.epsKm).toBe(3.5);
     expect(custom.corsOrigins).toEqual(['https://a.example', 'https://b.example']);
     expect(custom.feed.enabled).toBe(true);
@@ -358,7 +353,8 @@ describe('config loading', () => {
     const { loadConfig: load } = await import('../src/config.js');
     const empty = load({} as NodeJS.ProcessEnv);
     expect(empty.port).toBe(8787);
-    expect(empty.mode).toBe('simulation');
+    expect('mode' in empty).toBe(false);
+    expect(empty.sources).toEqual([]);
     expect(empty.feed.enabled).toBe(false);
     expect(empty.audio.enabled).toBe(false);
     expect(empty.ai.provider).toBe('heuristic');

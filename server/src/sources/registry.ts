@@ -2,7 +2,6 @@ import {
   catalogIds,
   findCatalogSource,
   parseOpenMhzSpec,
-  type AppMode,
   type SourceStatus,
 } from '@crimetracker/shared';
 import type { Config } from '../config.js';
@@ -13,25 +12,14 @@ import { SourcePolicyError } from './policy.js';
 import { CatalogFeedSource } from './catalogFeed.js';
 import { OpenMhzCallSource } from './openmhz.js';
 import { PublicSafetyFeedSource } from './publicFeed.js';
-import { SimulationSource } from './simulation.js';
 import type { DataSource } from './types.js';
 
 /**
- * The mode a source belongs to.
+ * Builds every configured source.
  *
- * This is derived from the adapter's own kind rather than configured separately, so a
- * simulated source can never be counted as a live one by mistake.
- */
-export function modeOfSource(source: DataSource): AppMode {
-  return source.descriptor.kind === 'simulation' ? 'simulation' : 'live';
-}
-
-/**
- * Builds every configured source, regardless of the starting mode.
- *
- * All of them are registered with the pipeline, which then starts only those belonging
- * to the active mode. Building them up front is what makes the runtime LIVE/SIMULATION
- * switch real rather than cosmetic.
+ * Every source this can build reads published public-safety data; there is no generator
+ * and no mode to choose between, so an empty map means the publishers had nothing to
+ * report rather than that something is switched off.
  *
  * The application knows only the `DataSource` interface; this is the one place where
  * concrete adapters are named, so adding a provider is an edit here plus a new file.
@@ -42,15 +30,6 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
 } {
   const sources: DataSource[] = [];
   const warnings: string[] = [];
-
-  sources.push(
-    new SimulationSource({
-      intervalSeconds: config.simulation.intervalSeconds,
-      seed: config.simulation.seed,
-      backfill: config.simulation.backfill,
-      backfillHours: config.simulation.backfillHours,
-    }),
-  );
 
   /*
    * Speech-to-text is built once and shared: the OpenMHz source and the live-stream
@@ -182,10 +161,10 @@ export function buildSources(config: Config, extractor: IncidentExtractor): {
     );
   }
 
-  if (!sources.some((source) => modeOfSource(source) === 'live')) {
+  if (sources.length === 0) {
     warnings.push(
-      'No live source is configured, so LIVE mode is unavailable. Set SOURCES to one or ' +
-        'more catalogued feeds (run `npm run sources` to list them), or FEED_URL for an ' +
+      'No source is configured, so nothing will be ingested. Set SOURCES to one or more ' +
+        'catalogued feeds (run `npm run sources` to list them), or FEED_URL for an ' +
         'endpoint that is not catalogued. See .env.example.',
     );
   }

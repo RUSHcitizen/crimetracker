@@ -220,14 +220,20 @@ export const STATUS_LABEL: Record<IncidentStatus, string> = {
 };
 
 /** Where a source sits on the trust spectrum. */
-export const SOURCE_KINDS = ['simulation', 'public-feed', 'audio', 'manual'] as const;
+/**
+ * What kind of thing produced an incident.
+ *
+ * There is no `simulation` kind: this system ingests published public-safety data and
+ * nothing else. Fabricated incidents are not a mode it can be put into.
+ */
+export const SOURCE_KINDS = ['public-feed', 'audio', 'manual'] as const;
 export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 /**
  * How a field's value came to exist. The UI must never render `ai-inferred` the same way
  * it renders `source`.
  */
-export const PROVENANCE_ORIGINS = ['source', 'ai-inferred', 'derived', 'simulated'] as const;
+export const PROVENANCE_ORIGINS = ['source', 'ai-inferred', 'derived'] as const;
 export type ProvenanceOrigin = (typeof PROVENANCE_ORIGINS)[number];
 
 export const LOCATION_PRECISIONS = ['exact', 'block', 'area', 'unknown'] as const;

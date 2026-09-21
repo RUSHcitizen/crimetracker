@@ -12,6 +12,7 @@ import {
 import { useTracker } from '../state/store.js';
 import { useSelectedIncident } from '../state/selectors.js';
 import { Chip, EmptyState, Meter, Panel, Section } from '../components/primitives.js';
+import { IncidentBriefPanel } from './IncidentBrief.js';
 
 const PROCESSING_STAGES: { key: string; label: string }[] = [
   { key: 'received', label: 'RECEIVED' },
@@ -73,6 +74,10 @@ function IncidentDetail({ incident }: { incident: Incident }) {
 
   return (
     <div className="detail" key={incident.id}>
+      {/* The brief comes first: it is the answer to "what is this?", and everything
+          below it is the evidence for that answer. */}
+      <IncidentBriefPanel incident={incident} />
+
       {/* ------------------------------ headline ------------------------- */}
       <div className={`detail__head detail__head--${meta.accent}`}>
         <div className="detail__glyph" aria-hidden="true">
@@ -122,9 +127,7 @@ function IncidentDetail({ incident }: { incident: Incident }) {
             v={
               <>
                 {incident.source.name}{' '}
-                <Chip tone={incident.source.kind === 'simulation' ? 'amber' : 'cyan'}>
-                  {incident.source.kind.toUpperCase()}
-                </Chip>
+                <Chip tone="cyan">{incident.source.kind.toUpperCase()}</Chip>
               </>
             }
           />
@@ -138,11 +141,6 @@ function IncidentDetail({ incident }: { incident: Incident }) {
             </Chip>
           )}
           <Chip tone="ghost">PRECISION {incident.location.precision.toUpperCase()}</Chip>
-          {incident.source.kind === 'simulation' && (
-            <Chip tone="amber" title="Generated locally by the simulation engine.">
-              FICTIONAL RECORD
-            </Chip>
-          )}
           {aiFields.length > 0 && (
             <Chip tone="violet" title="One or more fields were produced by a model, not the source.">
               CONTAINS AI INFERENCE
@@ -276,22 +274,9 @@ function Readout({ k, v, mono = false }: { k: string; v: React.ReactNode; mono?:
 }
 
 function ProvenanceChip({ field, entry }: { field: ProvenanceField; entry: ProvenanceEntry }) {
-  const tone =
-    entry.origin === 'ai-inferred'
-      ? 'violet'
-      : entry.origin === 'derived'
-        ? 'amber'
-        : entry.origin === 'simulated'
-          ? 'ghost'
-          : 'cyan';
+  const tone = entry.origin === 'ai-inferred' ? 'violet' : entry.origin === 'derived' ? 'amber' : 'cyan';
   const label =
-    entry.origin === 'ai-inferred'
-      ? 'AI'
-      : entry.origin === 'derived'
-        ? 'DERIVED'
-        : entry.origin === 'simulated'
-          ? 'SIM'
-          : 'SOURCE';
+    entry.origin === 'ai-inferred' ? 'AI' : entry.origin === 'derived' ? 'DERIVED' : 'SOURCE';
   return (
     <Chip tone={tone} title={entry.note ?? `${field}: ${entry.origin}`}>
       {field.replace('incidentType', 'TYPE').toUpperCase()} · {label}

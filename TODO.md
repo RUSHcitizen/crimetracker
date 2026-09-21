@@ -13,7 +13,12 @@ Status key: `[x]` done · `[~]` in progress · `[ ]` todo
 - [x] `shared/normalize.ts` — validation, coordinate rejection, provenance
 - [x] `shared/geo.ts` — haversine, bbox, WA region bounds
 
-## Phase 4 — Simulation engine
+## Phase 4 — Simulation engine  *(removed)*
+- [x] Removed in full at the user's direction: the generator, the LIVE/SIMULATION mode,
+      the `simulation` source kind and the `simulated` provenance origin. The system now
+      ingests published public-safety data or nothing at all.
+
+## Phase 4 (original scope, superseded)
 - [x] WA place table (cities + neighbourhoods, real public coordinates)
 - [x] Scenario-weighted generator: type, severity, description, transcript, confidence
 - [x] Arrival process over time (Poisson-ish, diurnal weighting), burst scenarios
@@ -79,6 +84,15 @@ Status key: `[x]` done · `[~]` in progress · `[ ]` todo
 - [x] `HeuristicExtractor` (default, local)
 - [x] `OpenAICompatibleExtractor` (OpenAI / Ollama / vLLM / LM Studio)
 - [x] Provenance tagging so inference is never shown as fact
+
+## Phase 15 — Briefs and voice
+- [x] `composeBrief` in shared — deterministic, adds no facts, worded identically on both
+      runtimes
+- [x] `LlmBriefGenerator` — model-written briefs from an allow-listed projection of the
+      record, falling back to the composed brief on anything unusable
+- [x] `BriefService` — one brief per incident, cached and coalesced
+- [x] `GET /api/incidents/:id/brief` on the Node server and the Worker
+- [x] Spoken briefs via the browser's own speech synthesis, off by default
 
 ## Phase 13 — Polish
 - [x] Design tokens, angular panel chrome, scanlines, typography, transitions

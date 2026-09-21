@@ -116,8 +116,6 @@ export interface SourceStatus {
   readonly url?: string | null;
 }
 
-export type AppMode = 'live' | 'simulation';
-
 /** A spatio-temporal concentration found in data already received. Not a prediction. */
 export interface PatternCluster {
   readonly id: string;
@@ -204,7 +202,6 @@ export interface ExtractionResult {
 
 export interface SnapshotFrame {
   readonly type: 'snapshot';
-  readonly mode: AppMode;
   readonly serverTime: string;
   readonly incidents: readonly Incident[];
   readonly patterns: readonly PatternCluster[];
@@ -237,11 +234,6 @@ export interface SourcesFrame {
   readonly sources: readonly SourceStatus[];
 }
 
-export interface ModeFrame {
-  readonly type: 'mode';
-  readonly mode: AppMode;
-}
-
 export interface PulseFrame {
   readonly type: 'pulse';
   readonly serverTime: string;
@@ -254,5 +246,4 @@ export type ServerFrame =
   | PatternsFrame
   | StatsFrame
   | SourcesFrame
-  | ModeFrame
   | PulseFrame;

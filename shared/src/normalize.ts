@@ -49,10 +49,6 @@ export interface NormalizeFailure {
 
 export type NormalizeResult = NormalizeSuccess | NormalizeFailure;
 
-function defaultOrigin(sourceKind: SourceDescriptor['kind']): ProvenanceEntry['origin'] {
-  return sourceKind === 'simulation' ? 'simulated' : 'source';
-}
-
 function coercePrecision(value: unknown): LocationPrecision | null {
   if (typeof value !== 'string') return null;
   const lower = value.toLowerCase();
@@ -105,7 +101,9 @@ export function normalizeIncident(raw: RawIncident, options: NormalizeOptions): 
   const now = options.now ?? Date.now();
   const region = options.region === undefined ? WASHINGTON_BBOX : options.region;
   const { source } = options;
-  const origin = defaultOrigin(source.kind);
+  // Every incident here comes from a publisher. A value the source itself stated is
+  // `source`; anything this system worked out is `derived` or `ai-inferred`.
+  const origin: ProvenanceEntry['origin'] = 'source';
   const provenance: ProvenanceMap = { ...(raw.provenance ?? {}) };
 
   const setProvenance = (field: keyof ProvenanceMap, entry: ProvenanceEntry) => {
@@ -254,8 +252,8 @@ export function applyExtraction(
     confidence: extraction.confidence,
     note,
   });
-  const isFromSource = (field: keyof ProvenanceMap) =>
-    provenance[field]?.origin === 'source' || provenance[field]?.origin === 'simulated';
+  // A value the publisher stated is never overwritten by a model reading the same text.
+  const isFromSource = (field: keyof ProvenanceMap) => provenance[field]?.origin === 'source';
 
   let incidentType = incident.incidentType;
   if (extraction.incidentType && !isFromSource('incidentType')) {

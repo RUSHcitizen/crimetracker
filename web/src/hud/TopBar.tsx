@@ -1,29 +1,24 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatClock, formatRelative } from '@crimetracker/shared';
 import { useTracker } from '../state/store.js';
-import { setServerMode } from '../lib/api.js';
 import { Chip } from '../components/primitives.js';
 
 /**
- * The header rail: identity, mode, clock, data-source health, link state.
+ * The header rail: identity, provenance, clock, data-source health, link state.
  *
- * The mode indicator is the most important element on the screen — it is the difference
- * between "these are fictional records" and "these came from a real feed" — so it gets
- * the strongest treatment in the bar.
+ * The LIVE plate is a statement, not a switch. There is nothing to toggle between: this
+ * system ingests published public-safety data and has no way to generate an incident of
+ * its own, so the plate names the sources rather than a mode.
  */
 export function TopBar() {
-  const mode = useTracker((s) => s.mode);
   const connection = useTracker((s) => s.connection);
   const sources = useTracker((s) => s.sources);
   const stats = useTracker((s) => s.stats);
   const lastFrameAt = useTracker((s) => s.lastFrameAt);
-  const setMode = useTracker((s) => s.setMode);
   const ui = useTracker((s) => s.ui);
   const setUi = useTracker((s) => s.setUi);
 
   const [now, setNow] = useState(() => new Date());
-  const [notice, setNotice] = useState<string | null>(null);
-  const noticeTimer = useRef<number | null>(null);
   useEffect(() => {
     const id = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(id);
@@ -38,28 +33,6 @@ export function TopBar() {
   const linkLabel =
     connection === 'open' ? 'LINK OK' : connection === 'connecting' ? 'LINKING' : 'LINK LOST';
 
-  const toggleMode = async () => {
-    const next = mode === 'simulation' ? 'live' : 'simulation';
-    const result = await setServerMode(next);
-    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-
-    if (result.ok) {
-      setMode(result.mode);
-      setNotice(null);
-      return;
-    }
-    // The server would not switch, so the indicator stays as it was and says why.
-    if (result.mode) setMode(result.mode);
-    setNotice(result.reason);
-    noticeTimer.current = window.setTimeout(() => setNotice(null), 7000);
-  };
-
-  useEffect(
-    () => () => {
-      if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
-    },
-    [],
-  );
 
   return (
     <header className="topbar">
@@ -78,29 +51,14 @@ export function TopBar() {
         <span className="topbar__version micro">v0.1</span>
       </div>
 
-      <button
-        type="button"
-        className={`modeswitch modeswitch--${mode}`}
-        onClick={() => void toggleMode()}
-        title={
-          mode === 'simulation'
-            ? 'Simulation mode: every incident shown is fictional. Click to request live mode.'
-            : 'Live mode: incidents come from configured public sources. Click to return to simulation.'
-        }
+      <div
+        className="modeswitch modeswitch--live"
+        title="Every incident shown came from a configured public data source. This system has no simulation engine and cannot generate incidents."
       >
         <span className="modeswitch__dot dot dot--pulse" />
-        <span className="modeswitch__label">{mode === 'simulation' ? 'SIMULATION' : 'LIVE'}</span>
-        <span className="modeswitch__sub micro">
-          {mode === 'simulation' ? 'FICTIONAL DATA' : 'PUBLIC SOURCES'}
-        </span>
-      </button>
-
-      {notice && (
-        <div className="modenotice" role="status">
-          <span className="modenotice__bar" />
-          <span className="modenotice__text">{notice}</span>
-        </div>
-      )}
+        <span className="modeswitch__label">LIVE</span>
+        <span className="modeswitch__sub micro">PUBLIC SOURCES</span>
+      </div>
 
       <div className="topbar__spacer" />
 

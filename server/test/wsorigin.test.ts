@@ -8,7 +8,7 @@ import { registerWebsocket } from '../src/http/ws.js';
 import { RealtimeHub } from '../src/pipeline/hub.js';
 import { IngestionPipeline } from '../src/pipeline/ingest.js';
 import { loadConfig } from '../src/config.js';
-import { SIMULATION_DESCRIPTOR } from '../src/sources/simulation.js';
+import { TEST_SOURCE } from './helpers/records.js';
 
 const ALLOWED = 'http://localhost:5173';
 
@@ -20,7 +20,7 @@ const ALLOWED = 'http://localhost:5173';
 async function server() {
   const db = openDatabase(':memory:');
   const repository = new IncidentRepository(db.driver);
-  repository.upsertSource(SIMULATION_DESCRIPTOR);
+  repository.upsertSource(TEST_SOURCE);
   const hub = new RealtimeHub(10);
   const pipeline = new IngestionPipeline({
     config: { ...loadConfig(), databasePath: ':memory:' },

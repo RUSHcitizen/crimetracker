@@ -4,14 +4,17 @@ A public-safety **incident visualization** system: a full-screen holographic map
 Washington State with a dense technical HUD, fed by a pluggable ingestion pipeline and a
 realtime WebSocket stream.
 
-It runs on real published agency data. Seattle Fire 911 dispatch, SPD calls for service,
-SPD offence reports, WSDOT statewide roadway incidents, National Weather Service warnings
-and USGS seismic events are catalogued and one setting away, and any other portal dataset
-can be connected from configuration. Archived public scanner calls from OpenMHz are wired
-in as an audio source, and an optional overlay shows WSDOT's public roadway cameras beside
-the incidents. It also ships a simulation engine so it is fully functional
-with nothing connected, and it never presents simulated data as real: the mode indicator
-reflects which sources are actually running, and live mode stops the simulation outright.
+It runs on real published agency data, and only on real published agency data. Seattle
+Fire 911 dispatch, SPD calls for service, SPD offence reports, WSDOT statewide roadway
+incidents, National Weather Service warnings and USGS seismic events are catalogued and
+one setting away; any other portal dataset can be connected from configuration; archived
+public scanner calls are wired in as an audio source; and an optional overlay shows
+WSDOT's public roadway cameras beside the incidents.
+
+There is **no simulation engine**. The system has no way to generate an incident of its
+own, so an empty map means the publishers had nothing to report — not that a mode is set
+wrongly. Click any incident for a short plain-language brief, which the browser can read
+aloud.
 
 ```
 npm install
@@ -26,9 +29,10 @@ npm run dev          # http://localhost:5173
 * It is **not** a dispatch system, and not a prediction system.
 * Pattern Detection describes concentrations in reports **already received**. It is
   labelled `ANALYTICAL INFERENCE` everywhere it appears, and it forecasts nothing.
-* Every incident carries its source kind (`simulation` / `public-feed` / `audio`) and
-  every field carries provenance, so `SOURCE INFORMATION` and `AI-INFERRED` values are
-  never shown as the same thing.
+* Every incident carries its source kind (`public-feed` / `audio` / `manual`) and every
+  field carries provenance, so `SOURCE INFORMATION` and `AI-INFERRED` values are never
+  shown as the same thing. There is no `simulation` kind and no `simulated` provenance
+  origin — the vocabulary for a fabricated record does not exist in the codebase.
 * It consumes **publicly accessible** data only. There is no support — and no code path —
   for encrypted feeds, credentialed private sources, rate-limit evasion, or any form of
   access-control circumvention. `server/src/sources/policy.ts` enforces this at runtime.
@@ -84,31 +88,46 @@ npm run probe:openmhz -- <system> # check a radio system before wiring it up
 | `A` | analytics |
 | `P` | toggle pattern detection |
 | `C` | toggle the public roadway-camera overlay |
+| `V` | toggle reading each selected incident aloud |
 | `[` / `]` | collapse the left / right panel |
 | `Esc` | close the overlay, or clear the selection |
 
-## 3. Simulation mode
+## 3. Briefs and voice
 
-Simulation is the default (`MODE=simulation`). The engine generates fictional incidents
-across Washington with realistic timing, categories, severities, descriptions, radio-style
-transcripts, confidence values and processing states.
+Agency data is written for dispatchers, not readers: `BURGLARY - IN PROGRESS`,
+`1500 BLOCK OF 3RD AVE`, `EventCategory: Collision`. Selecting an incident shows a short
+plain-language brief at the top of the detail panel, and the browser can read it aloud.
 
-* Incidents arrive continuously (`SIM_INTERVAL_SECONDS`, diurnally weighted, Poisson
-  inter-arrival times).
-* Roughly 6% of ticks produce a **burst** — a tight run of related reports in one place —
-  which is what Pattern Detection is there to find.
-* Startup backfills `SIM_BACKFILL` incidents over `SIM_BACKFILL_HOURS`, so the interface
-  is never empty on open.
-* Some records deliberately arrive **without a usable position**, because real feeds do.
-  They are listed and counted, and simply not plotted.
-* Set `SIM_SEED` for a byte-identical run, which is useful for demos and screenshots.
-
-The `SIMULATION` indicator in the top bar, the standing banner over the map, and the
-`FICTIONAL RECORD` chip on every incident detail make the mode unmissable.
-
-```bash
-SIM_INTERVAL_SECONDS=4 SIM_BACKFILL=6000 npm run dev   # a much busier state
 ```
+A traffic report at I-5 southbound at milepost 157, 5 minutes ago. Reported as:
+Collision blocking the right lane of southbound I-5 near Boeing Access Rd. Note that
+the position is approximate, to about block level, and the category was inferred from
+the text rather than stated by the source. Severity 2 of 5, low.
+Source: WSDOT Highway Alerts.
+```
+
+Two generators, and the interface never confuses them:
+
+| | Chip | When |
+| --- | --- | --- |
+| Composed locally from the record's fields | `COMPOSED` (amber) | the default — no key, no network |
+| Written by a language model | `AI-WRITTEN` (violet) | when `AI_PROVIDER=openai-compatible` is configured |
+
+Violet is this interface's colour for inference everywhere, so a model-written brief reads
+as one at a glance. The model is given an allow-listed view of the record — never the raw
+publisher payload, which can carry internal codes and identifiers, and never the
+coordinates — and is instructed to rephrase rather than add. If it is unreachable, returns
+nothing, or starts writing something other than a brief, the composed version is shown
+instead: an accurate sentence beats a plausible fabrication.
+
+**Neither generator adds facts.** Every clause traces to a field of the incident. No cause,
+no suspect, no outcome, no severity the record did not carry — those would be assertions
+about real events and, often, about real people.
+
+**Voice** uses the browser's own speech synthesis, so nothing is sent anywhere to be
+voiced and there are no audio assets in this project. It is off until you ask for it:
+`▶ SPEAK` reads the current brief once, `AUTO` reads each incident as you select it.
+Changing selection stops the previous one mid-sentence rather than queueing a backlog.
 
 ## 4. Configuring data sources
 
@@ -137,7 +156,7 @@ npm run probe:source -- seattle-fire-911 # check the mapping against live data
 ```
 
 ```bash
-MODE=live SOURCES=seattle-fire-911,seattle-police-calls npm run dev
+SOURCES=seattle-fire-911,seattle-police-calls npm run dev
 ```
 
 | id | What it is | Lag | Position | Key |
@@ -239,7 +258,7 @@ by community-run receivers and publishes them as discrete *calls* — each one a
 talkgroup, a start time and a duration. Point at a system by the id in its page URL:
 
 ```bash
-MODE=live SOURCES=openmhz:psern025 OPENMHZ_ACK=1 npm run dev
+SOURCES=openmhz:psern025 OPENMHZ_ACK=1 npm run dev
 #   https://openmhz.com/system/psern025   ->   openmhz:psern025
 ```
 
@@ -309,17 +328,14 @@ For a source not in the catalogue, `FEED_URL` plus a field mapping still works �
 `.env.example`. `CT_CATALOG_OVERRIDE_URL` points a catalogued source at a mirror or a
 local stub without forking the entry.
 
-### Live vs simulation
+### No modes
 
-The mode governs **which sources actually run**, not just a label. Every configured
-source is registered at startup, and the pipeline starts only those belonging to the
-active mode: in live mode the simulation engine is genuinely stopped, so a simulated
-incident cannot arrive while the interface reads LIVE.
+Every registered source is started, because every source reads published public-safety
+data. There is nothing to switch between, no `MODE` setting, and no `POST /api/mode`
+endpoint — a request to put this system into generating its own records does not exist.
 
-Switching is refused when nothing could serve the requested mode — `POST /api/mode`
-answers `409` with a reason, the indicator keeps showing the mode still in force, and the
-top bar states why. A LIVE label the server did not agree to would defeat the point of
-the indicator.
+If nothing is configured the server says so on startup and the map stays empty, which is
+the honest outcome. The top bar names the sources actually online rather than a mode.
 
 ## 5. Configuring AI extraction
 
@@ -416,11 +432,15 @@ Set `DATABASE_PATH` to a persistent volume and `RETENTION_HOURS` to bound growth
 
 ## 7b. Deploying to Cloudflare
 
-The deployed configuration is **live on real data out of the box**: `wrangler.jsonc` sets
-`MODE=live` with the three catalogued sources that need no credential
-(`seattle-fire-911`, `nws-alerts-wa`, `usgs-earthquakes-wa`), so a fresh deployment shows
-real incidents with nothing further to set up. The simulation engine is registered but
-stopped, and a live deployment never backfills fictional history.
+The deployed configuration runs on **real data out of the box**: `wrangler.jsonc` sets
+`SOURCES` to the three catalogued sources that need no credential (`seattle-fire-911`,
+`nws-alerts-wa`, `usgs-earthquakes-wa`), so a fresh deployment shows real incidents with
+nothing further to set up.
+
+Briefs on the Worker are the composed kind. A per-click model call inside a Durable Object
+competes with ingestion for the same subrequest budget, so model-written briefs are a
+Node-server feature for now; the wording of a composed brief is identical on both, because
+both call the same function in `shared`.
 
 To add statewide roadway incidents and the camera overlay, both of which need WSDOT's
 free access code:
@@ -430,11 +450,8 @@ npx wrangler secret put WSDOT_ACCESS_CODE
 # then add wsdot-highway-alerts to SOURCES in wrangler.jsonc
 ```
 
-Two things worth knowing about mode on a deployment. Switching mode in the UI persists
-across Durable Object eviction, so an operator's choice is not quietly undone. But editing
-`MODE` in `wrangler.jsonc` and redeploying **overrides** that stored choice — otherwise a
-config change would appear to do nothing while the deployment sat in the old mode. The
-rule lives in `resolveStartupMode` and is tested.
+There is no mode to configure. The Worker ingests the sources in `SOURCES` and has no
+other behaviour available to it.
 
 Radio (`openmhz:`) is a Node-server source. Transcribing call audio does not fit a Durable
 Object's CPU and subrequest budget, so the Worker registers such a source in an error
@@ -471,7 +488,7 @@ That publishes one Worker that serves everything from a single origin:
   request ──► Worker (worker/src/index.ts)
                 ├── /api/*, /ws  ──► Durable Object "TrackerRoom"
                 │                      ├── SQLite     (incident store)
-                │                      ├── alarms     (simulation + feed polling)
+                │                      ├── alarms     (feed polling)
                 │                      └── WebSockets (hibernated fan-out)
                 └── everything else ──► static assets (web/dist)
 ```
@@ -483,10 +500,10 @@ Why it is shaped this way:
   restores the ordering and consistency guarantees the single-process Node server had.
 * **The store is the same code.** `IncidentRepository` talks to a `SqlDriver`, so the
   identical queries run against `node:sqlite` on a server and the Durable Object's
-  embedded SQLite on Cloudflare. Normalization, pattern detection and the simulation
+  embedded SQLite on Cloudflare. Normalization, pattern detection and brief composition
   engine are runtime-neutral and shared verbatim.
 * **Alarms replace `setInterval`.** A Durable Object alarm survives eviction, so the
-  simulation and feed polling keep running when nobody is connected. A five-minute cron
+  feed polling keeps running when nobody is connected. A five-minute cron
   nudges the room awake as a backstop.
 * **WebSocket hibernation** means idle clients cost nothing and the object can be evicted
   without dropping them.
@@ -499,7 +516,7 @@ Run it locally against the real Workers runtime — no Cloudflare account needed
 npm run dev:worker        # builds the client, then serves on http://127.0.0.1:8788
 ```
 
-Configuration lives in `wrangler.jsonc` under `vars` (mode, simulation rate, pattern
+Configuration lives in `wrangler.jsonc` under `vars` (sources, pattern
 thresholds, `FEED_URL` and its field mapping). Secrets never go there:
 
 ```bash
@@ -557,11 +574,11 @@ thousands of incidents cost a handful of layers rather than thousands of DOM nod
 | `GET /api/config` | the non-secret client configuration |
 | `GET /api/incidents` | filter by type, severity, source, time, bbox, radius, keyword |
 | `GET /api/incidents/:id` | one incident with full provenance |
+| `GET /api/incidents/:id/brief` | plain-language brief, with its origin (`derived` / `ai-inferred`) |
 | `GET /api/stats` | aggregates and the activity timeline |
 | `GET /api/patterns` | detected concentrations, with a standing disclaimer |
 | `GET /api/sources` | adapter health |
 | `GET /api/cameras` | public roadway-camera directory, with attribution and use notice |
-| `POST /api/mode` | switch live / simulation |
 | `WS /ws` | snapshot on connect, then batched deltas |
 
 ## 9. Testing
@@ -570,8 +587,8 @@ thousands of incidents cost a handful of layers rather than thousands of DOM nod
 npm test
 ```
 
-343 tests covering incident normalization, coordinate validation and rejection, timestamp
-parsing, provenance rules, the simulation generator, the heuristic and OpenAI-compatible
+339 tests covering incident normalization, coordinate validation and rejection, timestamp
+parsing, provenance rules, the heuristic and OpenAI-compatible
 extractors, source policy and feed mapping, the audio buffer, pattern detection
 (including an equivalence check against a brute-force reference implementation and a
 performance bound), the repository and statistics, mode switching (that a stopped source really produces
@@ -588,7 +605,11 @@ and stale-on-failure behaviour), the OpenMHz radio adapter (call mapping against
 shapes, the acknowledgement and speech-to-text gates, client-side talkgroup filtering,
 squelch-blip and per-poll caps, rate-limit back-off, watermarking and dedup, the
 server-side fetch allow-list and its SSRF refusals, and that unit radio identifiers never
-reach storage), and the rule that a LIVE deployment never backfills simulated history.
+reach storage), the brief generators (that a composed brief states the caveats the record
+carries and invents nothing, that the model is handed only an allow-listed view with the
+raw publisher payload and coordinates withheld, that unusable model output falls back to
+the composed brief rather than being shown, and that briefs are generated once per
+incident), and that the vocabulary for a fabricated incident no longer exists.
 
 ## 10. Security notes
 
@@ -618,7 +639,11 @@ reach storage), and the rule that a LIVE deployment never backfills simulated hi
   A feed that could name `169.254.169.254` or an address inside the deployment's own
   network is a server-side request forgery surface, and it is treated as one.
 * Sound is off by default and, when enabled, uses WebAudio-generated tones only — there
-  are no audio assets in this project.
+  are no audio assets in this project. Spoken briefs use the browser's own speech
+  synthesis, so nothing is sent anywhere to be voiced, and they are off until asked for.
+* A language model is handed an allow-listed projection of an incident, never the record
+  itself: the publisher's raw payload and the coordinates are withheld, and model output
+  is length-clamped and sanitised before it can reach the DOM.
 
 ## 11. Out of scope
 
@@ -672,5 +697,5 @@ Incident data, when live sources are enabled, comes from the publishing agency a
 its attribution in the source panel — for the catalogued sources, the City of Seattle Open
 Data portal and the Seattle Police and Fire Departments.
 
-Everything else — the interface, the simulation engine, the pattern detection and the
+Everything else — the interface, the pattern detection and the
 visual design — is original to this project.

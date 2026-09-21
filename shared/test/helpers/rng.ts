@@ -1,6 +1,11 @@
 /**
- * Small, seedable PRNG (mulberry32). Deterministic seeding makes the simulation
- * reproducible for demos and tests.
+ * Seeded RNG — test scaffolding only.
+ *
+ * This used to ship in `shared/src`, where it existed to drive the simulation engine.
+ * That engine is gone: the product has no way to fabricate an incident and therefore no
+ * use for randomness. Tests still legitimately need *deterministic* randomness to build
+ * spreads of points and to compare the spatial index against a brute-force reference, so
+ * the generator lives here, where it cannot be reached from application code.
  */
 export interface Rng {
   /** Float in [0, 1). */

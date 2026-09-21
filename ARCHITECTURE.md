@@ -77,8 +77,6 @@ interface DataSource {
 
 Implementations shipped:
 
-* **`SimulationSource`** — the default. A scenario-driven generator producing fictional
-  incidents across Washington. Always labelled `SIMULATION`.
 * **`PublicSafetyFeedSource`** — a generic, *configuration-driven* poller for publicly
   accessible structured incident feeds (JSON / GeoJSON over HTTPS). The field mapping is
   declared in config, so connecting a new open-data endpoint is a config change, not a
@@ -106,11 +104,28 @@ Implementations shipped:
 The app never depends on a specific provider: the registry owns a list of `DataSource`s
 and the pipeline only knows the interface.
 
-**Mode is enforced, not displayed.** Every configured source is registered at startup;
-`IngestionPipeline.applyMode` then starts exactly those whose kind belongs to the active
-mode and stops the rest (`simulation` kind → simulation mode, everything else → live).
-A switch to a mode no registered source can serve is refused rather than applied, so the
-LIVE/SIMULATION indicator can never describe something the server is not doing.
+**There are no modes.** Every registered source is started, because every source reads
+published public-safety data. The system has no generator, so there is nothing to switch
+between, no `MODE` setting and no endpoint that would put it into producing records of its
+own. An empty map means the publishers had nothing to report.
+
+The vocabulary is gone too: `SOURCE_KINDS` has no `simulation` and `PROVENANCE_ORIGINS`
+has no `simulated`. Reintroducing a generator would have to reintroduce those first, in
+the open, rather than a fabricated record quietly passing validation.
+
+### Briefs
+
+`shared/src/brief.ts` composes a short plain-language account of an incident from its own
+fields, deterministically — the same function on both runtimes, so a brief is worded
+identically wherever it is generated. `server/src/brief/` adds a model-backed generator
+for the same job and a bounded per-incident cache.
+
+The constraint on both is that a brief **adds no facts**: every clause traces to a field
+of the incident. The model is given an allow-listed projection rather than the record —
+no raw publisher payload, no coordinates — and unusable output falls back to the composed
+brief. The two are labelled differently wherever they appear (`AI-WRITTEN` in violet,
+`COMPOSED` in amber), because a fluent sentence about a real incident, read aloud, is
+exactly the kind of output that gets taken as established fact.
 
 ### Not incidents: the camera overlay
 

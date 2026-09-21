@@ -135,20 +135,10 @@
   transition: background var(--t-fast);
 }
 
-.modeswitch--simulation {
-  color: var(--amber);
-  border-color: rgba(255, 162, 58, 0.5);
-  background: rgba(255, 162, 58, 0.09);
-}
-
 .modeswitch--live {
   color: var(--crimson);
   border-color: rgba(255, 60, 95, 0.55);
   background: rgba(255, 60, 95, 0.1);
-}
-
-.modeswitch:hover {
-  filter: brightness(1.25);
 }
 
 .modeswitch__dot {
@@ -1134,10 +1124,6 @@
   color: var(--text-faint);
 }
 
-.modebanner--simulation .modebanner__text {
-  color: rgba(255, 162, 58, 0.82);
-}
-
 .modebanner--live .modebanner__text {
   color: rgba(255, 60, 95, 0.85);
 }
@@ -1760,4 +1746,73 @@
   .modenotice {
     display: none;
   }
+}
+
+/* =============================================================================
+   Incident brief.
+
+   Sits at the top of the detail panel: the plain-language answer to "what is
+   this?", with the evidence for it underneath. A model-written brief is violet
+   — the colour this interface reserves for inference — so it can never be
+   mistaken for the agency's own words.
+   ========================================================================== */
+
+.brief {
+  margin: 0 0 10px;
+  padding: 9px 10px 10px;
+  background: var(--surface-raise);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--amber);
+}
+
+.brief--ai {
+  border-left-color: var(--violet);
+  background: rgba(185, 140, 255, 0.06);
+}
+
+.brief__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.brief__title {
+  color: var(--text-dim);
+}
+
+.brief__spacer {
+  flex: 1;
+}
+
+.brief__body {
+  min-height: 34px;
+}
+
+.brief__text {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text-bright);
+  transition: color var(--t-fast);
+}
+
+/* While the voice is reading, the text it is reading is lifted slightly. */
+.brief__text--speaking {
+  color: #fff;
+  text-shadow: 0 0 14px rgba(79, 216, 255, 0.35);
+}
+
+.brief__pending {
+  margin: 0;
+  color: var(--text-faint);
+  letter-spacing: var(--label-tracking);
+}
+
+.brief__footnote {
+  margin: 7px 0 0;
+  padding-top: 6px;
+  color: var(--text-faint);
+  line-height: 1.45;
+  border-top: 1px solid var(--line-faint);
 }

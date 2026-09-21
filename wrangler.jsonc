@@ -45,7 +45,7 @@
 
   "vars": {
     /*
-     * Live, on real agency data, out of the box.
+     * The sources to ingest.
      *
      * These three are the catalogued sources that need no credential of any kind, so a
      * deployment shows real incidents with nothing further to configure:
@@ -60,17 +60,12 @@
      *   npx wrangler secret put WSDOT_ACCESS_CODE
      *   ...then add wsdot-highway-alerts to SOURCES below.
      *
-     * Run `npm run sources` for the full catalogue and the ad-hoc spec syntax. Radio
-     * (`openmhz:`) is a Node-server source and is reported as unavailable here.
-     *
-     * Switching MODE and redeploying overrides whatever mode the running object was last
-     * switched to in the UI; see `resolveStartupMode`.
+     * There is no MODE setting: this system ingests published public-safety data and has
+     * no way to generate an incident of its own. An empty map means the publishers had
+     * nothing to report. Radio (`openmhz:`) is a Node-server source and is reported as
+     * unavailable here.
      */
-    "MODE": "live",
     "SOURCES": "seattle-fire-911,nws-alerts-wa,usgs-earthquakes-wa",
-    "SIM_INTERVAL_SECONDS": "20",
-    "SIM_BACKFILL": "2400",
-    "SIM_BACKFILL_HOURS": "12",
     "RETENTION_HOURS": "168",
     "PATTERN_WINDOW_MINUTES": "45",
     "PATTERN_EPS_KM": "0.9",

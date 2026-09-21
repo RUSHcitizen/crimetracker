@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  IncidentRepository, SimulationGenerator, type Incident, type ServerFrame, type SnapshotFrame, type Stats } from '@crimetracker/shared';
+  IncidentRepository, type Incident, type ServerFrame, type SnapshotFrame, type Stats } from '@crimetracker/shared';
 import { RealtimeHub, type HubClient } from '../src/pipeline/hub.js';
+import { makeCluster, makeRaws } from './helpers/records.js';
 import { openDatabase } from '../src/db/database.js';
 import { IngestionPipeline } from '../src/pipeline/ingest.js';
 import { loadConfig } from '../src/config.js';
-import { SIMULATION_DESCRIPTOR } from '../src/sources/simulation.js';
+import { TEST_SOURCE } from './helpers/records.js';
 import type { DataSource } from '../src/sources/types.js';
 
 function recordingClient(id = 'c1') {
@@ -25,7 +26,7 @@ const incident = (id: string): Incident => ({
   id,
   timestamp: new Date().toISOString(),
   ingestedAt: new Date().toISOString(),
-  source: { id: 'sim', name: 'Sim', kind: 'simulation', url: null },
+  source: { id: 'sim', name: 'Sim', kind: 'public-feed', url: null },
   incidentType: 'theft',
   severity: 2,
   description: `incident ${id}`,
@@ -127,10 +128,10 @@ describe('RealtimeHub', () => {
 
 describe('IngestionPipeline → hub', () => {
   class InertSource implements DataSource {
-    readonly descriptor = SIMULATION_DESCRIPTOR;
+    readonly descriptor = TEST_SOURCE;
     status() {
       return {
-        ...SIMULATION_DESCRIPTOR,
+        ...TEST_SOURCE,
         state: 'online' as const,
         enabled: true,
         lastEventAt: null,
@@ -148,7 +149,7 @@ describe('IngestionPipeline → hub', () => {
     vi.useFakeTimers();
     const db = openDatabase(':memory:');
     const repository = new IncidentRepository(db.driver);
-    repository.upsertSource(SIMULATION_DESCRIPTOR);
+    repository.upsertSource(TEST_SOURCE);
 
     const hub = new RealtimeHub(20);
     const { client, frames } = recordingClient();
@@ -161,9 +162,7 @@ describe('IngestionPipeline → hub', () => {
       logger: { info: () => {}, warn: () => {}, error: () => {} },
     });
 
-    const generator = new SimulationGenerator({ seed: 'hub-test' });
-    const burst = generator.generateBurst(new Date(), 8);
-    pipeline.ingest(new InertSource(), burst);
+    pipeline.ingest(new InertSource(), makeCluster(8));
 
     await vi.advanceTimersByTimeAsync(40);
     const incidentFrames = frames.filter((f) => f.type === 'incidents');
@@ -183,7 +182,7 @@ describe('IngestionPipeline → hub', () => {
     vi.useFakeTimers();
     const db = openDatabase(':memory:');
     const repository = new IncidentRepository(db.driver);
-    repository.upsertSource(SIMULATION_DESCRIPTOR);
+    repository.upsertSource(TEST_SOURCE);
 
     const hub = new RealtimeHub(20);
     const { client, frames } = recordingClient();
@@ -233,7 +232,7 @@ describe('websocket endpoint', () => {
 
     const db = openDatabase(':memory:');
     const repository = new IncidentRepository(db.driver);
-    repository.upsertSource(SIMULATION_DESCRIPTOR);
+    repository.upsertSource(TEST_SOURCE);
 
     const hub = new RealtimeHub(20);
     const pipeline = new IngestionPipeline({
@@ -244,10 +243,10 @@ describe('websocket endpoint', () => {
     });
 
     class Inert implements DataSource {
-      readonly descriptor = SIMULATION_DESCRIPTOR;
+      readonly descriptor = TEST_SOURCE;
       status() {
         return {
-          ...SIMULATION_DESCRIPTOR,
+          ...TEST_SOURCE,
           state: 'online' as const,
           enabled: true,
           lastEventAt: null,
@@ -261,11 +260,7 @@ describe('websocket endpoint', () => {
       async stop() {}
     }
 
-    const generator = new SimulationGenerator({ seed: 'ws-test' });
-    pipeline.ingest(
-      new Inert(),
-      Array.from({ length: 20 }, (_, i) => generator.generate(new Date(Date.now() - i * 60_000))),
-    );
+    pipeline.ingest(new Inert(), makeRaws(20));
 
     const app = Fastify({ logger: false });
     await app.register(websocket);
@@ -285,10 +280,11 @@ describe('websocket endpoint', () => {
     const snapshot = frames[0] as SnapshotFrame;
     expect(snapshot.type).toBe('snapshot');
     expect(snapshot.incidents.length).toBe(20);
-    expect(snapshot.mode).toBe('simulation');
+    // The snapshot carries no mode: there is only one kind of data here.
+    expect('mode' in snapshot).toBe(false);
     expect(snapshot.stats).toBeDefined();
 
-    pipeline.ingest(new Inert(), [generator.generate(new Date())]);
+    pipeline.ingest(new Inert(), makeRaws(1));
     await vi.waitFor(() => expect(frames.some((f) => f.type === 'incidents')).toBe(true), {
       timeout: 4000,
     });

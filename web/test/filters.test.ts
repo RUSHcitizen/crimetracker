@@ -11,7 +11,7 @@ function incident(overrides: Partial<Incident> = {}): Incident {
     id: 'x',
     timestamp: new Date(NOW - 10 * 60_000).toISOString(),
     ingestedAt: new Date(NOW - 10 * 60_000).toISOString(),
-    source: { id: 'simulation', name: 'Simulation Engine', kind: 'simulation', url: null },
+    source: { id: 'test-feed', name: 'Test Feed', kind: 'public-feed', url: null },
     incidentType: 'theft',
     severity: 2,
     description: 'Reported theft from a parked vehicle near Pike St.',
@@ -87,7 +87,7 @@ describe('matchesFilters', () => {
   it('matches keywords across description, location, type and source', () => {
     expect(matchesFilters(incident(), filters({ query: 'pike' }), NOW, null)).toBe(true);
     expect(matchesFilters(incident(), filters({ query: 'theft' }), NOW, null)).toBe(true);
-    expect(matchesFilters(incident(), filters({ query: 'simulation' }), NOW, null)).toBe(true);
+    expect(matchesFilters(incident(), filters({ query: 'test feed' }), NOW, null)).toBe(true);
     expect(matchesFilters(incident(), filters({ query: 'spokane' }), NOW, null)).toBe(false);
   });
 
