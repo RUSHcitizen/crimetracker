@@ -220,7 +220,7 @@ export function LeftPanel() {
           Feed — Newest First
         </div>
         <div className="incidentlist">
-          {active.length === 0 && <EmptyState>NO INCIDENTS MATCH THE CURRENT FILTERS</EmptyState>}
+          {active.length === 0 && <FeedEmptyState />}
           {active.map((incident) => (
             <IncidentRow
               key={incident.id}
@@ -324,6 +324,42 @@ function CameraSourceRow() {
       {camerasVisible && message && <p className="sourcenote micro">{message}</p>}
     </>
   );
+}
+
+/**
+ * Why the feed is empty, specifically.
+ *
+ * "No incidents match the current filters" is only true when there are incidents to
+ * filter. With nothing stored at all — a fresh deployment, or one whose publishers have
+ * been quiet — that message sends someone hunting through filters for a problem that is
+ * upstream. Since this system cannot manufacture incidents to fill the gap, the least it
+ * can do is say which gap it is.
+ */
+function FeedEmptyState() {
+  const total = useTracker((s) => s.incidents.length);
+  const sources = useTracker((s) => s.sources);
+
+  if (total > 0) return <EmptyState>NO INCIDENTS MATCH THE CURRENT FILTERS</EmptyState>;
+
+  if (sources.length === 0) {
+    return <EmptyState>NO SOURCES CONFIGURED — SET SOURCES AND RESTART</EmptyState>;
+  }
+
+  const failing = sources.filter((s) => s.state === 'error');
+  if (failing.length > 0) {
+    return (
+      <EmptyState>
+        NO RECORDS YET — {failing.length} OF {sources.length} SOURCE
+        {sources.length === 1 ? '' : 'S'} REPORTING AN ERROR. SEE DATA SOURCES ABOVE.
+      </EmptyState>
+    );
+  }
+
+  if (sources.every((s) => s.state === 'idle' || s.state === 'connecting')) {
+    return <EmptyState>WAITING FOR THE FIRST POLL TO COMPLETE</EmptyState>;
+  }
+
+  return <EmptyState>SOURCES ONLINE — NO RECORDS PUBLISHED IN THIS WINDOW YET</EmptyState>;
 }
 
 function stateColor(state: string): string {

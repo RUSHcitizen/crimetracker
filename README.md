@@ -13,7 +13,10 @@ WSDOT's public roadway cameras beside the incidents.
 
 There is **no simulation engine**. The system has no way to generate an incident of its
 own, so an empty map means the publishers had nothing to report — not that a mode is set
-wrongly. Click any incident for a short plain-language brief, which the browser can read
+wrongly. Records written by an older build that did have one are purged at startup, and a
+row whose source kind this build does not recognise is never served even before that runs
+(`purgeUnservable`): removing a feature does not remove what it already wrote to the
+database. Click any incident for a short plain-language brief, which the browser can read
 aloud.
 
 ```

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { loadWorkerConfig, publicWorkerConfig, type Env } from '../src/config.js';
 import { parseOpenMhzSpec } from '@crimetracker/shared';
 
@@ -105,3 +105,33 @@ describe('sources the Worker cannot run', () => {
   });
 });
 
+
+describe('ingestion must not be one exception away from stopping', () => {
+  it('keeps the alarm chain alive when a tick throws', async () => {
+    /*
+     * A Durable Object's clock is only as long as its last successful reschedule. This
+     * mirrors the shape of `alarm()`: whatever the body does, the next alarm is set.
+     * With the reschedule on the happy path instead, one malformed upstream payload ends
+     * polling permanently and silently, and the object goes on serving what it already
+     * had as though nothing were wrong.
+     */
+    const setAlarm = vi.fn(async () => {});
+
+    const tick = async (body: () => Promise<void>) => {
+      try {
+        await body();
+      } catch {
+        // reported, not rethrown
+      } finally {
+        await setAlarm();
+      }
+    };
+
+    await tick(async () => {
+      throw new Error('malformed payload');
+    });
+    await tick(async () => {});
+
+    expect(setAlarm).toHaveBeenCalledTimes(2);
+  });
+});

@@ -56,6 +56,19 @@ async function main(): Promise<void> {
   const repository = new IncidentRepository(db.driver);
   app.log.info(`database: ${resolveDatabasePath(config.databasePath)}`);
 
+  /*
+   * Remove anything an older build left behind that this one cannot vouch for — most
+   * importantly the fabricated incidents the removed simulation engine had already
+   * written. Deleting the generator did not delete its output.
+   */
+  const purged = repository.purgeUnservable();
+  if (purged.incidents > 0 || purged.sources > 0) {
+    app.log.warn(
+      `purged ${purged.incidents} incident(s) and ${purged.sources} source(s) from an ` +
+        'earlier build that this version cannot serve (simulated records are the usual cause)',
+    );
+  }
+
   if (config.retentionHours > 0) {
     const removed = repository.deleteOlderThan(Date.now() - config.retentionHours * 3_600_000);
     if (removed > 0) app.log.info(`pruned ${removed} incidents older than ${config.retentionHours}h`);

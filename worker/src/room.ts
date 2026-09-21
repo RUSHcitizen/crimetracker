@@ -91,6 +91,8 @@ export class TrackerRoom extends DurableObject<Env> {
   #accepted = 0;
   #rejected = 0;
   #booted = false;
+  /** Per-instance: the purge runs once per live object, not once per deployment. */
+  #purged = false;
   #seenFeedIds = new Set<string>();
   #cameras: CameraDirectory | null = null;
   #camerasAtMs = 0;
@@ -311,24 +313,61 @@ export class TrackerRoom extends DurableObject<Env> {
       await this.ctx.storage.put('booted', true);
       this.runAnalysis();
     }
+
+    /*
+     * Durable Object storage outlives a deployment. Rows written by an earlier build —
+     * above all the fabricated incidents the removed simulation engine backfilled —
+     * survive a deploy that no longer contains the code that made them, and keep being
+     * served as though they were real. Purging is idempotent and costs nothing once the
+     * database is clean, so it runs on every start rather than behind a one-shot flag
+     * that a fresh object would miss.
+     */
+    if (!this.#purged) {
+      this.#purged = true;
+      const purged = this.#repo.purgeUnservable();
+      if (purged.incidents > 0 || purged.sources > 0) {
+        console.warn(
+          `purged ${purged.incidents} incident(s) and ${purged.sources} source(s) left by ` +
+            'an earlier build; recomputing analysis',
+        );
+        this.runAnalysis();
+        this.#broadcast({ type: 'stats', stats: this.#currentStats() });
+      }
+    }
     const existing = await this.ctx.storage.getAlarm();
     if (existing === null) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
   }
 
 
+  /**
+   * The clock.
+   *
+   * The next alarm is scheduled in a `finally`, and that placement is the whole point: a
+   * Durable Object's alarm chain is only as long as its last successful reschedule. With
+   * the call at the end of the happy path, a single throw anywhere above it — one
+   * malformed payload, one unexpected upstream shape — ends polling permanently and
+   * silently, and the object goes on serving whatever it had already stored as though
+   * nothing were wrong. Ingestion must not be one exception away from stopping forever.
+   */
   override async alarm(): Promise<void> {
-    const now = Date.now();
+    try {
+      const now = Date.now();
 
-    for (const runtime of this.#sources.values()) {
-      if (!runtime.pollable) continue;
-      if (runtime.state === 'stopped' || now < runtime.nextPollAt) continue;
-      runtime.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
-      await this.#pollFeed(runtime);
+      for (const runtime of this.#sources.values()) {
+        if (!runtime.pollable) continue;
+        if (runtime.state === 'stopped' || now < runtime.nextPollAt) continue;
+        runtime.nextPollAt = now + this.#config.feed.pollSeconds * 1000;
+        // `#pollFeed` handles its own failures; this is belt and braces around the rest.
+        await this.#pollFeed(runtime);
+      }
+
+      this.runAnalysis();
+      await this.#persistMeta();
+    } catch (error) {
+      console.error('alarm tick failed', error);
+    } finally {
+      await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
     }
-
-    this.runAnalysis();
-    await this.#persistMeta();
-    await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
   }
 
   /* --------------------------------- ingestion ------------------------------- */
@@ -573,7 +612,13 @@ export class TrackerRoom extends DurableObject<Env> {
       descriptor,
       catalog,
       watermark: null,
-      state: 'online',
+      /*
+       * `idle`, not `online`. A source that has never completed a poll has not
+       * established anything, and reporting it as online is how a deployment ends up
+       * showing "3/3 sources" beside "0 ingested" with nothing to explain the gap. The
+       * first poll moves it to online, error or degraded, each of which says something.
+       */
+      state: 'idle',
       ingested: 0,
       rejected: 0,
       lastEventAt: null,

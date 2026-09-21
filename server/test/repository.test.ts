@@ -203,3 +203,116 @@ describe('database path resolution', () => {
     expect(resolveDatabasePath(':memory:')).toBe(':memory:');
   });
 });
+
+describe('purging records an older build left behind', () => {
+  /**
+   * Writes a row directly, bypassing the repository, the way an older build would have.
+   * `insertIncident` could not produce a `simulation` kind today — the type does not
+   * exist — but the database can still contain one.
+   */
+  function writeLegacyRow(id: string, kind: string): void {
+    const now = new Date().toISOString();
+    db.driver.run(
+      `INSERT OR REPLACE INTO sources (id, name, kind, note, url, first_seen_at, last_seen_at)
+       VALUES (?, ?, ?, '', NULL, ?, ?)`,
+      'simulation',
+      'Simulation Engine',
+      kind,
+      now,
+      now,
+    );
+    db.driver.run(
+      `INSERT INTO incidents (
+         id, timestamp, timestamp_ms, ingested_at, source_id, source_kind, incident_type,
+         severity, description, location_label, location_area, approximate, precision,
+         lat, lon, confidence, transcript, status, tags, raw, search_blob
+       ) VALUES (?, ?, ?, ?, 'simulation', ?, 'theft', 2, 'Fabricated report',
+                 '3200 block of Stewart St, Seattle', 'Seattle', 0, 'exact',
+                 47.6033, -122.3356, 0.93, NULL, 'confirmed', '[]', NULL, 'fabricated report')`,
+      id,
+      now,
+      Date.now(),
+      now,
+      kind,
+    );
+    db.driver.run(
+      `INSERT INTO incident_provenance (incident_id, field, origin, confidence, note)
+       VALUES (?, 'description', 'simulated', NULL, NULL)`,
+      id,
+    );
+  }
+
+  it('never serves a row whose source kind this build does not recognise', () => {
+    writeLegacyRow('sim-mua7gx', 'simulation');
+    // Hydration casts stored strings straight onto the incident type, so without this
+    // guard a fabricated row is rendered exactly like a real report.
+    expect(repo.getIncident('sim-mua7gx')).toBeNull();
+    expect(repo.queryIncidents({ limit: 100 })).toHaveLength(0);
+    expect(repo.queryIncidents({ q: 'fabricated' })).toHaveLength(0);
+  });
+
+  it('deletes them, along with their provenance and source row', () => {
+    writeLegacyRow('sim-1', 'simulation');
+    writeLegacyRow('sim-2', 'simulation');
+
+    const purged = repo.purgeUnservable();
+    expect(purged.incidents).toBe(2);
+    expect(purged.sources).toBe(1);
+
+    expect(db.driver.all('SELECT id FROM incidents')).toHaveLength(0);
+    expect(db.driver.all('SELECT incident_id FROM incident_provenance')).toHaveLength(0);
+    expect(db.driver.all("SELECT id FROM sources WHERE id = 'simulation'")).toHaveLength(0);
+  });
+
+  it('leaves genuine records untouched', () => {
+    const kept = seed(3);
+    writeLegacyRow('sim-3', 'simulation');
+
+    const purged = repo.purgeUnservable();
+    expect(purged.incidents).toBe(1);
+    expect(repo.queryIncidents({ limit: 100 })).toHaveLength(kept.length);
+    expect(repo.getIncident(kept[0]!.id)).not.toBeNull();
+  });
+
+  it('clears clusters, which were computed over the purged rows', () => {
+    writeLegacyRow('sim-4', 'simulation');
+    repo.recordClusters([
+      {
+        id: 'ptn-1',
+        center: { lat: 47.6, lon: -122.33 },
+        radiusKm: 0.4,
+        count: 9,
+        incidentIds: ['sim-4'],
+        dominantType: 'theft',
+        typeShare: 1,
+        firstAt: new Date().toISOString(),
+        lastAt: new Date().toISOString(),
+        spanMinutes: 12,
+        severityMean: 2,
+        confidence: 0.9,
+        rationale: [],
+        detectedAt: new Date().toISOString(),
+      },
+    ]);
+    expect(db.driver.all('SELECT id FROM clusters').length).toBeGreaterThan(0);
+
+    repo.purgeUnservable();
+    // A cluster's payload embeds the incidents it was built from; one computed over
+    // purged rows asserts a concentration that no longer exists.
+    expect(db.driver.all('SELECT id FROM clusters')).toHaveLength(0);
+  });
+
+  it('is a no-op on a clean database', () => {
+    seed(2);
+    expect(repo.purgeUnservable()).toEqual({ incidents: 0, sources: 0 });
+    expect(repo.queryIncidents({ limit: 100 })).toHaveLength(2);
+  });
+
+  it('keeps fabricated rows out of the statistics too', () => {
+    seed(2);
+    writeLegacyRow('sim-5', 'simulation');
+    const stats = repo.computeStats(0);
+    // Counted from the incidents table, so the guard has to hold here as well.
+    expect(stats.total).toBe(2);
+  });
+});

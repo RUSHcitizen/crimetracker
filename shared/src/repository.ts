@@ -1,5 +1,5 @@
 import { haversineKm } from './geo.js';
-import { INCIDENT_TYPE_META, SEVERITY_LABEL } from './taxonomy.js';
+import { INCIDENT_TYPE_META, SEVERITY_LABEL, SOURCE_KINDS } from './taxonomy.js';
 import type { SqlDriver } from './storage.js';
 import type {
   ExtractionResult,
@@ -162,7 +162,7 @@ export class IncidentRepository {
   }
 
   getIncident(id: string): Incident | null {
-    const row = this.#db.get(`${SELECT_INCIDENT} WHERE i.id = ?`, id) as IncidentRow | undefined;
+    const row = this.#db.get(`${SELECT_INCIDENT} AND i.id = ?`, id) as IncidentRow | undefined;
     if (!row) return null;
     return this.#hydrate(row, this.#provenanceFor([row.id]));
   }
@@ -218,7 +218,8 @@ export class IncidentRepository {
 
     const limit = Math.min(query.limit ?? 500, 5000);
     const offset = query.offset ?? 0;
-    const sql = `${SELECT_INCIDENT}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}
+    // SELECT_INCIDENT already carries the servable-kind guard as its WHERE.
+    const sql = `${SELECT_INCIDENT}${where.length ? ` AND ${where.join(' AND ')}` : ''}
        ORDER BY i.timestamp_ms DESC LIMIT ? OFFSET ?`;
     // Over-fetch when a radius filter will drop rows after the SQL pass.
     params.push(query.near ? limit * 3 : limit, offset);
@@ -241,13 +242,54 @@ export class IncidentRepository {
   }
 
   countIncidents(): number {
-    const row = this.#db.get('SELECT COUNT(*) AS n FROM incidents') as { n: number };
+    const row = this.#db.get(`SELECT COUNT(*) AS n FROM incidents WHERE ${SERVABLE}`) as {
+      n: number;
+    };
     return row.n;
   }
 
   deleteOlderThan(cutoffMs: number): number {
     const result = this.#db.run('DELETE FROM incidents WHERE timestamp_ms < ?', cutoffMs);
     return Number(result.changes ?? 0);
+  }
+
+  /**
+   * Delete stored records this build cannot vouch for.
+   *
+   * Storage outlives code, and removing a feature does not remove what it already wrote.
+   * This project used to ship a simulation engine that backfilled thousands of fabricated
+   * incidents; deleting the generator left every one of those rows sitting in the
+   * database, and because hydration casts stored strings straight onto the incident type,
+   * they kept being served — and rendered — as though they were real reports.
+   *
+   * So this is not a simulation-specific cleanup. It is the general rule that a row whose
+   * `source_kind` is not one this build recognises has no business being returned, and
+   * gets removed rather than merely hidden. It runs at startup on both runtimes and is
+   * cheap on a clean database.
+   *
+   * Clusters are cleared whenever anything was removed: a cluster's stored payload embeds
+   * the incident ids and counts it was computed from, so one built over purged rows is a
+   * claim about a concentration that no longer exists. The next analysis pass rebuilds
+   * them from what is actually left.
+   */
+  purgeUnservable(): { incidents: number; sources: number } {
+    const incidents = Number(
+      this.#db.run(`DELETE FROM incidents WHERE source_kind NOT IN (${SERVABLE_KINDS})`)
+        .changes ?? 0,
+    );
+    const sources = Number(
+      this.#db.run(`DELETE FROM sources WHERE kind NOT IN (${SERVABLE_KINDS})`).changes ?? 0,
+    );
+
+    if (incidents > 0 || sources > 0) {
+      // `ON DELETE CASCADE` only fires with foreign keys enabled, which a Durable Object
+      // manages for itself — so the dependent rows are removed explicitly.
+      this.#db.run('DELETE FROM incident_provenance WHERE incident_id NOT IN (SELECT id FROM incidents)');
+      this.#db.run('DELETE FROM extractions WHERE incident_id NOT IN (SELECT id FROM incidents)');
+      this.#db.run('DELETE FROM clusters');
+    }
+
+    return { incidents, sources };
   }
 
   /* -------------------------------- clusters ------------------------------- */
@@ -287,11 +329,11 @@ export class IncidentRepository {
       return row?.n ?? 0;
     };
 
-    const total = scalar('SELECT COUNT(*) AS n FROM incidents');
-    const today = scalar('SELECT COUNT(*) AS n FROM incidents WHERE timestamp_ms >= ?', startOfDay.getTime());
-    const lastHour = scalar('SELECT COUNT(*) AS n FROM incidents WHERE timestamp_ms >= ?', now - 3_600_000);
-    const last15 = scalar('SELECT COUNT(*) AS n FROM incidents WHERE timestamp_ms >= ?', now - 900_000);
-    const withoutCoordinates = scalar('SELECT COUNT(*) AS n FROM incidents WHERE lat IS NULL');
+    const total = scalar(`SELECT COUNT(*) AS n FROM incidents WHERE ${SERVABLE}`);
+    const today = scalar(`SELECT COUNT(*) AS n FROM incidents WHERE ${SERVABLE} AND timestamp_ms >= ?`, startOfDay.getTime());
+    const lastHour = scalar(`SELECT COUNT(*) AS n FROM incidents WHERE ${SERVABLE} AND timestamp_ms >= ?`, now - 3_600_000);
+    const last15 = scalar(`SELECT COUNT(*) AS n FROM incidents WHERE ${SERVABLE} AND timestamp_ms >= ?`, now - 900_000);
+    const withoutCoordinates = scalar(`SELECT COUNT(*) AS n FROM incidents WHERE ${SERVABLE} AND lat IS NULL`);
 
     const windowStart = now - timelineMinutes * 60_000;
 
@@ -301,7 +343,7 @@ export class IncidentRepository {
      * hours of empty buckets. The span is reported alongside so the axis can be
      * labelled truthfully.
      */
-    const oldestRow = this.#db.get('SELECT MIN(timestamp_ms) AS n FROM incidents') as
+    const oldestRow = this.#db.get(`SELECT MIN(timestamp_ms) AS n FROM incidents WHERE ${SERVABLE}`) as
       | { n: number | null }
       | undefined;
     const oldest = oldestRow?.n ?? null;
@@ -310,7 +352,7 @@ export class IncidentRepository {
 
     const byType = (
       this.#db.all(`SELECT incident_type AS key, COUNT(*) AS count FROM incidents
-           WHERE timestamp_ms >= ? GROUP BY incident_type ORDER BY count DESC`, windowStart) as unknown as { key: string; count: number }[]
+           WHERE ${SERVABLE} AND timestamp_ms >= ? GROUP BY incident_type ORDER BY count DESC`, windowStart) as unknown as { key: string; count: number }[]
     ).map<StatsBucket>((r) => ({
       key: r.key,
       label: INCIDENT_TYPE_META[r.key as keyof typeof INCIDENT_TYPE_META]?.label ?? r.key,
@@ -319,12 +361,12 @@ export class IncidentRepository {
 
     const byArea = (
       this.#db.all(`SELECT COALESCE(location_area, 'Unspecified') AS key, COUNT(*) AS count FROM incidents
-           WHERE timestamp_ms >= ? GROUP BY key ORDER BY count DESC LIMIT 12`, windowStart) as unknown as { key: string; count: number }[]
+           WHERE ${SERVABLE} AND timestamp_ms >= ? GROUP BY key ORDER BY count DESC LIMIT 12`, windowStart) as unknown as { key: string; count: number }[]
     ).map<StatsBucket>((r) => ({ key: r.key, label: r.key, count: r.count }));
 
     const bySeverity = (
       this.#db.all(`SELECT severity AS key, COUNT(*) AS count FROM incidents
-           WHERE timestamp_ms >= ? GROUP BY severity ORDER BY key DESC`, windowStart) as unknown as { key: number; count: number }[]
+           WHERE ${SERVABLE} AND timestamp_ms >= ? GROUP BY severity ORDER BY key DESC`, windowStart) as unknown as { key: number; count: number }[]
     ).map<StatsBucket>((r) => ({
       key: String(r.key),
       label: SEVERITY_LABEL[r.key as 1 | 2 | 3 | 4 | 5] ?? String(r.key),
@@ -334,13 +376,13 @@ export class IncidentRepository {
     const bySource = (
       this.#db.all(`SELECT i.source_id AS key, s.name AS label, COUNT(*) AS count
            FROM incidents i JOIN sources s ON s.id = i.source_id
-           WHERE i.timestamp_ms >= ? GROUP BY i.source_id ORDER BY count DESC`, windowStart) as unknown as { key: string; label: string; count: number }[]
+           WHERE i.${SERVABLE} AND i.timestamp_ms >= ? GROUP BY i.source_id ORDER BY count DESC`, windowStart) as unknown as { key: string; label: string; count: number }[]
     ).map<StatsBucket>((r) => ({ key: r.key, label: r.label, count: r.count }));
 
     const bucketMs = (now - timelineStart) / buckets;
     const timelineRows = this.#db.all(`SELECT CAST((timestamp_ms - ?) / ? AS INTEGER) AS bucket,
                 COUNT(*) AS count, SUM(severity) AS severity_sum
-         FROM incidents WHERE timestamp_ms >= ? GROUP BY bucket`, timelineStart, bucketMs, timelineStart) as unknown as {
+         FROM incidents WHERE ${SERVABLE} AND timestamp_ms >= ? GROUP BY bucket`, timelineStart, bucketMs, timelineStart) as unknown as {
       bucket: number;
       count: number;
       severity_sum: number;
@@ -357,7 +399,10 @@ export class IncidentRepository {
     }
 
     const confidences = (
-      this.#db.all('SELECT confidence FROM incidents WHERE timestamp_ms >= ? ORDER BY confidence', windowStart) as unknown as { confidence: number }[]
+      this.#db.all(
+        `SELECT confidence FROM incidents WHERE ${SERVABLE} AND timestamp_ms >= ? ORDER BY confidence`,
+        windowStart,
+      ) as unknown as { confidence: number }[]
     ).map((r) => r.confidence);
     const medianConfidence =
       confidences.length === 0
@@ -449,9 +494,33 @@ export class IncidentRepository {
 /** Bound parameters per provenance lookup. See `#provenanceFor`. */
 const PROVENANCE_CHUNK = 90;
 
+/**
+ * Rows whose `source_kind` this build still recognises.
+ *
+ * Storage outlives code. A database written by an older build can hold rows this one has
+ * no vocabulary for — most consequentially, rows from the simulation engine that used to
+ * exist. Those must never be served: hydration casts the stored strings straight onto the
+ * incident type, so an unrecognised kind would sail through and be rendered as though it
+ * were a real report.
+ *
+ * `purgeUnservable` deletes them. This clause is the belt to that braces: even against a
+ * database that has not been purged yet, a row this build cannot vouch for is not
+ * returned.
+ */
+const SERVABLE_KINDS = SOURCE_KINDS.map((kind) => `'${kind}'`).join(', ');
+
+/**
+ * The guard, as a bare predicate.
+ *
+ * Every read path has to carry it — statistics included. Counting a fabricated row is
+ * just as wrong as rendering one, and the totals are what the operator glances at first.
+ */
+const SERVABLE = `source_kind IN (${SERVABLE_KINDS})`;
+
 const SELECT_INCIDENT = `
   SELECT i.*, s.name AS source_name, s.url AS source_url
-  FROM incidents i JOIN sources s ON s.id = i.source_id`;
+  FROM incidents i JOIN sources s ON s.id = i.source_id
+  WHERE i.source_kind IN (${SERVABLE_KINDS})`;
 
 function parseJsonArray(value: string): string[] {
   try {
