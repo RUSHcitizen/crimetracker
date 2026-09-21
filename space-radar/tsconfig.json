@@ -1,0 +1,16 @@
+{
+  "extends": "astro/tsconfigs/strict",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "types": ["astro/client"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "verbatimModuleSyntax": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
+    "baseUrl": ".",
+    "paths": { "~/*": ["src/*"] }
+  },
+  "include": ["src", "*.mjs", "*.ts"],
+  "exclude": ["dist", ".astro"]
+}

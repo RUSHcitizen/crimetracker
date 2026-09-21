@@ -1,5 +1,11 @@
 # Crime Tracker
 
+> **This repository now contains two independent apps.** Crime Tracker is documented below.
+> [`space-radar/`](space-radar/README.md) is a separate, self-contained Astro + Cloudflare
+> app — an interactive instrument for the Solar System — with its own `package.json`,
+> `wrangler.jsonc` and dependencies. Neither shares code or configuration with the other.
+
+
 A public-safety **incident visualization** system: a full-screen holographic map of
 Washington State with a dense technical HUD, fed by a pluggable ingestion pipeline and a
 realtime WebSocket stream.

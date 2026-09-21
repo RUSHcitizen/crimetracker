@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Space Radar">
+  <rect width="64" height="64" fill="#06080b"/>
+  <g fill="none" stroke="#ffb000" stroke-width="1.1">
+    <circle cx="32" cy="32" r="6.4" opacity=".75"/>
+    <circle cx="32" cy="32" r="10.9" opacity=".5"/>
+    <circle cx="32" cy="32" r="15" opacity=".32"/>
+  </g>
+  <g stroke="#e6eaf0" stroke-width="1" opacity=".6">
+    <path d="M32 17.5v4M32 42.5v4M17.5 32h4M42.5 32h4"/>
+  </g>
+  <circle cx="32" cy="32" r="2.6" fill="#ffd07a"/>
+</svg>

@@ -1,0 +1,67 @@
+---
+import '../styles/app.css';
+import App from '../components/App';
+
+/*
+ * The one page.
+ *
+ * Prerendered to static HTML so first paint costs nothing, with the whole instrument
+ * hydrated as a single Preact island. `client:load` rather than `client:visible` because
+ * the island *is* the page — there is nothing to reveal it.
+ */
+const description =
+  'An interactive instrument for the Solar System. Track spacecraft, scrub through time, chase asteroids and run orbital experiments — on real, sourced data.';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no"
+    />
+    <title>SPACE RADAR</title>
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#06080b" />
+    <meta name="color-scheme" content="dark" />
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Space Radar" />
+
+    <meta property="og:title" content="SPACE RADAR" />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <div id="app">
+      <App client:load />
+    </div>
+
+    <noscript>
+      <div style="padding:24px;font-family:system-ui;color:#e6eaf0">
+        <h1 style="font-size:16px;letter-spacing:.16em">SPACE RADAR</h1>
+        <p style="color:#8b95a5;line-height:1.6;max-width:44em">
+          This is a live orbital visualisation — it needs JavaScript and WebGL to run. Everything it
+          draws is computed in your browser from published ephemerides; nothing is pre-rendered.
+        </p>
+      </div>
+    </noscript>
+
+    <script is:inline>
+      // Register the service worker once the page is idle, so it never competes with the
+      // renderer for the first few seconds.
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').catch(function () {
+            /* Offline support is a bonus, not a requirement. */
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

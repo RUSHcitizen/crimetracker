@@ -1,0 +1,33 @@
+{
+  "name": "space-radar",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SPACE RADAR \u2014 an interactive instrument for flying around the Solar System.",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build && node scripts/post-build.mjs",
+    "preview": "astro preview",
+    "check": "astro check",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy": "astro build && wrangler deploy",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.0.1",
+    "preact": "^10.26.4",
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "@astrojs/cloudflare": "^12.6.0",
+    "@astrojs/preact": "^4.1.0",
+    "@types/three": "^0.180.0",
+    "astro": "^5.14.1",
+    "playwright": "^1.63.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5",
+    "wrangler": "^4.0.0"
+  }
+}
