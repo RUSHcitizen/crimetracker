@@ -225,10 +225,12 @@ secrets, `CLOUDFLARE_API_TOKEN` (create one with the "Edit Cloudflare Workers" t
 | Deploy command | `npx wrangler deploy` |
 | Root directory | *(blank — the app is the repository)* |
 
-Set the build command explicitly. Cloudflare installs dependencies for you but does **not**
-infer a build, so leaving the field empty runs `wrangler deploy` against a `dist/` that was
-never produced — the failure reads as a missing `assets.directory`, which points at the
-config rather than at the real cause.
+No build command is needed: `wrangler.jsonc` declares one under `build.command`, so
+`wrangler deploy` builds before it uploads. That is deliberate — a build host that installs
+dependencies and then runs the deploy command directly would otherwise fail with
+"entry-point file not found", and a fix that lives only in a web form is invisible to
+anyone reading this repository. Setting the field anyway is harmless; it just builds
+twice.
 
 `.node-version` records the Node version this was built and tested against. Builders are
 free to ignore it (Cloudflare's does, using its own Node 24, which works fine); set

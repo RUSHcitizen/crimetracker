@@ -14,7 +14,7 @@
     "check": "astro check",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "wrangler deploy",
     "icons": "node scripts/make-icons.mjs"
   },
   "dependencies": {

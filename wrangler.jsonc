@@ -13,6 +13,18 @@
     "directory": "./dist",
     "binding": "ASSETS"
   },
+  // Wrangler runs this before `deploy` and `dev`.
+  //
+  // It is here, rather than only in a CI dashboard field, because `wrangler deploy` on its
+  // own cannot produce `main` — the Astro adapter generates dist/_worker.js during the
+  // build. A build host that installs dependencies and then goes straight to the deploy
+  // command will always fail with "entry-point file not found", and the fix being a
+  // setting in a web form makes it invisible to anyone reading this repository. With the
+  // command declared here, `npx wrangler deploy` is self-sufficient anywhere.
+  "build": {
+    "command": "npm run build"
+  },
+
   "observability": { "enabled": true },
 
   "vars": {
