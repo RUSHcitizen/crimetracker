@@ -196,10 +196,9 @@ The client only ever talks to this Worker.
 
 ## Deploying
 
-The Worker is named `spacesight`, which must match the Worker the deploy is meant to land
-on — `wrangler deploy` writes to whatever `name` says here, not to whatever service the
-build was launched from. It publishes at `https://spacesight.<your-subdomain>.workers.dev`.
-(The interface is still called SPACE RADAR; this is only the deployment target.)
+The Worker is named `space-radar`. That name must match the Worker the deploy is meant to
+land on: `wrangler deploy` writes to whatever `name` says here, not to whatever service
+launched the build. It publishes at `https://space-radar.<your-subdomain>.workers.dev`.
 
 Three ways, in order of least setup:
 

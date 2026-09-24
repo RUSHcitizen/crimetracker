@@ -11,8 +11,8 @@
 #   3. Add your account ID as the secret CLOUDFLARE_ACCOUNT_ID
 #      (it is in the URL of your Cloudflare dashboard, and on the Workers overview page).
 #
-# The Worker is named `spacesight` in wrangler.jsonc, so the first successful
-# run publishes it at https://spacesight.<your-subdomain>.workers.dev.
+# The Worker is named `space-radar` in wrangler.jsonc, so the first successful
+# run publishes it at https://space-radar.<your-subdomain>.workers.dev.
 
 name: Deploy SPACE RADAR
 
