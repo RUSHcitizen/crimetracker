@@ -4,7 +4,17 @@ import { nowJd } from '../astro/time';
 import { formatDistanceInline } from '../format';
 import { distance, length, sub, type Vec3 } from '../astro/vec';
 import { buildCatalog } from '../data/catalog';
-import { cloudPositions, makeDemoSatellites, makeKuiperBelt, makeMainBelt, makeTrojans, type ParticleCloud } from '../data/populations';
+import {
+  cloudPositions,
+  makeDemoSatellites,
+  makeHildas,
+  makeKuiperBelt,
+  makeMainBelt,
+  makeNearEarth,
+  makeTrojans,
+  type ParticleCloud,
+} from '../data/populations';
+import { particleObject } from '../data/particle';
 import type { Provenance, ResolvedObject, SpaceObject } from '../data/types';
 import { Clock } from '../sim/clock';
 import { World } from '../sim/world';
@@ -53,6 +63,7 @@ export interface ObjectReadout {
   inclinationDeg: number | null;
   unplaced: boolean;
   phaseUnknown: boolean;
+  phaseSynthetic: boolean;
   soiKm: number | null;
 }
 
@@ -95,6 +106,8 @@ export class Engine {
   private gestures: GestureController;
   private clouds: ParticleCloud[];
   private cloudCache = new Map<string, { jd: number; data: Float32Array }>();
+  /** Incremented each time the particle sample epoch moves; the renderer keys uploads on it. */
+  private cloudEpoch = 0;
 
   private raf = 0;
   private running = false;
@@ -108,6 +121,8 @@ export class Engine {
   private _overlays: SandboxOverlay[] = [];
   private _dataNotice: string | null = null;
   private _hoverId: string | null = null;
+  /** The synthetic object built for the last tapped particle, so it can be retired. */
+  private _particleId: string | null = null;
   /** Viewport pixels hidden behind UI. Set by the shell as panels open and close. */
   private insets = { top: 0, bottom: 0 };
   private overlayInsets = { top: 0, bottom: 0, right: 58 };
@@ -132,7 +147,7 @@ export class Engine {
     overlayCanvas: HTMLCanvasElement,
   ) {
     this.world = new World([...buildCatalog(), ...makeDemoSatellites()]);
-    this.clouds = [makeMainBelt(), makeTrojans(), makeKuiperBelt()];
+    this.clouds = [makeNearEarth(), makeMainBelt(), makeHildas(), makeTrojans(), makeKuiperBelt()];
 
     this.scene = new SpaceScene(glCanvas);
     this.overlay = new Overlay(overlayCanvas);
@@ -148,7 +163,14 @@ export class Engine {
       },
       onTap: (x, y) => {
         const hit = this.overlay.pick(x, y);
-        this.select(hit ? hit.object.id : null);
+        if (hit) {
+          this.select(hit.object.id);
+          return;
+        }
+        // Nothing catalogued under the finger — try the particle populations, so a belt
+        // of thousands is something you can actually poke at rather than just look at.
+        const particle = this.pickParticle(x, y);
+        this.select(particle);
       },
       onHover: (x, y) => {
         // Pointer devices only — there is no hover on a touchscreen, and the app never
@@ -267,6 +289,8 @@ export class Engine {
       resolved: this.resolved,
       clouds: this.clouds,
       cloudPositionsFor: (cloud, atJd) => this.cloudPositionsFor(cloud, atJd),
+      cloudEpoch: this.cloudEpoch,
+      orbitBudget: this.orbitBudget(),
       selectedId: this._selectedId,
       trackedId: this._trackedId,
       layers: this.layers,
@@ -336,6 +360,16 @@ export class Engine {
       : 'GRAVITY — spheres of influence are too small to draw here. Zoom in on a planet.';
   }
 
+  /**
+   * How many orbit tracks to draw. Sized to the viewport, because the cost is in
+   * rasterising them and a phone has both fewer pixels to spare and less to spare them
+   * with. The selected and tracked objects are always inside the budget.
+   */
+  private orbitBudget(): number {
+    const w = this.container.clientWidth;
+    return w < 480 ? 26 : w < 900 ? 40 : 60;
+  }
+
   private labelBudget(): number {
     const w = this.container.clientWidth;
     const base = w < 480 ? 7 : w < 900 ? 11 : 16;
@@ -345,6 +379,41 @@ export class Engine {
   private recordFps(now: number): void {
     this.frameTimes.push(now);
     while (this.frameTimes.length > 0 && now - this.frameTimes[0]! > 1000) this.frameTimes.shift();
+  }
+
+  /**
+   * Resolve a tap to a particle in one of the simulated populations.
+   * Returns the id of a freshly built object, added to the world so everything else —
+   * the panel, tracking, the orbit track, search — works on it unchanged.
+   */
+  private pickParticle(x: number, y: number): string | null {
+    if (!this.layers.belts) return null;
+
+    const hit = this.scene.pickCloudPoint({
+      clouds: this.clouds,
+      positionsFor: (cloud) => this.cloudPositionsFor(cloud, this.clock.jd),
+      focus: this.rig.focus,
+      scale: this.rig.renderScale,
+      x,
+      y,
+      radiusPx: 18,
+    });
+    if (!hit) return null;
+
+    const cloud = this.clouds.find((c) => c.id === hit.cloudId);
+    if (!cloud) return null;
+    const obj = particleObject(cloud, hit.index);
+    if (!obj) return null;
+
+    // Keep exactly one of these alive at a time; otherwise a long session accumulates a
+    // catalogue entry for every belt rock anyone ever prodded.
+    if (this._particleId && this._particleId !== obj.id) {
+      const stale = this._particleId;
+      this.world.remove((o) => o.id === stale);
+    }
+    this.world.add([obj]);
+    this._particleId = obj.id;
+    return obj.id;
   }
 
   /** Particle positions are shared between frames when time has not moved far. */
@@ -357,6 +426,7 @@ export class Engine {
     const data = cached?.data ?? new Float32Array(cloud.elements.length * 3);
     cloudPositions(cloud, jd, data, 1);
     this.cloudCache.set(cloud.id, { jd, data });
+    this.cloudEpoch++;
     return data;
   }
 
@@ -367,6 +437,8 @@ export class Engine {
    * Accumulating breaks the moment you scrub, jump or reverse time — the trail would be a
    * record of where the camera has been, not where the object has.
    */
+  private trailCache: { id: string; jd: number; span: number; points: Vec3[] } | null = null;
+
   private trailFor(obj: SpaceObject, jd: number): Vec3[] {
     const eph = obj.ephemeris;
     let spanDays: number;
@@ -387,6 +459,15 @@ export class Engine {
     }
 
     const steps = 180;
+
+    // Re-deriving 181 ephemeris samples every frame is the single most expensive thing
+    // tracking does. The trail only changes meaningfully once the clock has advanced by
+    // about one sample step, so cache it until then.
+    const cached = this.trailCache;
+    if (cached && cached.id === obj.id && cached.span === spanDays && Math.abs(cached.jd - jd) < spanDays / steps) {
+      return cached.points;
+    }
+
     const out: Vec3[] = [];
     for (let i = 0; i <= steps; i++) {
       const t = jd - spanDays * (1 - i / steps);
@@ -409,7 +490,9 @@ export class Engine {
         break;
       }
     }
-    return first > 0 ? out.slice(first) : out;
+    const points = first > 0 ? out.slice(first) : out;
+    this.trailCache = { id: obj.id, jd, span: spanDays, points };
+    return points;
   }
 
   // -------------------------------------------------------------------------
@@ -523,6 +606,7 @@ export class Engine {
       inclinationDeg: inc,
       unplaced: r.unplaced,
       phaseUnknown: obj.phaseUnknown === true,
+      phaseSynthetic: obj.phaseSynthetic === true,
       soiKm: obj.soiKm ?? null,
     };
   }

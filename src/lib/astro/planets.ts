@@ -156,3 +156,25 @@ export const SPIN: Record<PlanetId | 'sun' | 'moon', { tiltDeg: number; periodHo
   neptune: { tiltDeg: 28.32, periodHours: 16.11 },
   pluto: { tiltDeg: 122.53, periodHours: -153.29 },
 };
+
+/**
+ * IAU north-pole orientation for each planet, in J2000 equatorial right ascension and
+ * declination (degrees).
+ *
+ * Satellite elements are published relative to their planet's equator, not to the
+ * ecliptic — Titan's inclination is 0.31°, not the 27.7° it works out to once Saturn's
+ * tilt is folded in. Carrying the poles lets the catalogue quote the published numbers
+ * and have the conversion done here, which is both less error-prone and easier to check
+ * against a reference.
+ */
+export const POLE: Record<string, { raDeg: number; decDeg: number }> = {
+  mercury: { raDeg: 281.01, decDeg: 61.42 },
+  venus: { raDeg: 272.76, decDeg: 67.16 },
+  earth: { raDeg: 0.0, decDeg: 90.0 },
+  mars: { raDeg: 317.681, decDeg: 52.887 },
+  jupiter: { raDeg: 268.057, decDeg: 64.495 },
+  saturn: { raDeg: 40.589, decDeg: 83.537 },
+  uranus: { raDeg: 257.311, decDeg: -15.175 },
+  neptune: { raDeg: 299.36, decDeg: 43.46 },
+  pluto: { raDeg: 132.993, decDeg: -6.163 },
+};

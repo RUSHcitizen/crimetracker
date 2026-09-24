@@ -133,6 +133,14 @@ export function ObjectPanel(props: {
           POSITION NOT AVAILABLE — ORBIT SHOWN, BODY NOT PLACED
         </div>
       ) : null}
+      {r.phaseSynthetic && !r.unplaced ? (
+        <div
+          class="simbanner"
+          style={{ color: 'var(--cyan)', borderColor: 'rgba(111,211,255,.3)', background: 'rgba(111,211,255,.08)' }}
+        >
+          ORBIT IS REAL — POSITION ALONG IT IS NOT FITTED
+        </div>
+      ) : null}
       {r.provenance.tier === 'simulated' ? (
         <div class="simbanner">SIMULATED OBJECT — NOT A REAL BODY</div>
       ) : null}

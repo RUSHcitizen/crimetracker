@@ -52,6 +52,8 @@ export interface Layers {
 
 export interface FrameInput {
   jd: number;
+  /** How many orbit tracks may be drawn this frame. See `syncOrbits`. */
+  orbitBudget: number;
   /**
    * Pixels of the viewport covered by UI at the top and bottom.
    *
@@ -69,6 +71,8 @@ export interface FrameInput {
   resolved: ResolvedObject[];
   clouds: ParticleCloud[];
   cloudPositionsFor: (cloud: ParticleCloud, jd: number) => Float32Array;
+  /** Bumped whenever the particle sample epoch moves, so buffers re-upload exactly then. */
+  cloudEpoch: number;
   selectedId: string | null;
   trackedId: string | null;
   layers: Layers;
@@ -140,6 +144,8 @@ export class SpaceScene {
   private readonly cagePool: THREE.LineSegments[] = [];
   private readonly orbits = new Map<string, OrbitEntry>();
   private readonly cloudPoints = new Map<string, THREE.Points>();
+  private readonly cloudUploads = new Map<string, Float32Array>();
+  private readonly cloudEpochs = new Map<string, number>();
   private readonly overlayLines = new Map<string, THREE.Line>();
 
   private backdrop!: THREE.Points;
@@ -490,6 +496,21 @@ export class SpaceScene {
       return;
     }
 
+    // Gather the candidates first, then draw only the best of them.
+    //
+    // Orbit tracks are by far the most expensive thing on screen — a few hundred
+    // alpha-blended 256-segment polylines halves the frame rate on a weak GPU. Almost all
+    // of that is wasted: an orbit smaller than the screen needs nowhere near 256 segments,
+    // and the hundredth-most-interesting orbit in a crowded view adds nothing but load.
+    interface Candidate {
+      o: ResolvedObject['object'];
+      el: Elements;
+      parentPos: Vec3;
+      ratio: number;
+      priority: number;
+    }
+    const candidates: Candidate[] = [];
+
     for (const r of f.resolved) {
       const o = r.object;
       const eph = o.ephemeris;
@@ -500,36 +521,46 @@ export class SpaceScene {
       const parentPos = parentPosition(f, o.parent);
       if (!parentPos) continue;
 
-      // Skip orbits that are either a dot or far larger than the screen. An orbit many
-      // times wider than the view contributes one stray line crossing everything, so it
-      // fades out well before the hard cut.
       const scaleKm = Math.abs(el.a) * (1 + el.e);
       const ratio = scaleKm / f.cameraDistanceKm;
       if (ratio < 0.02 || ratio > 90) continue;
-      const overscaleFade = ratio > 4 ? Math.max(0.12, 1 - (ratio - 4) / 18) : 1;
 
       const selected = o.id === f.selectedId || o.id === f.trackedId;
-      const entry = this.ensureOrbit(o.id, el, f.jd, o.color, o.parent);
-      const count = entry.source.length / 3;
-      const pos = entry.line.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const arr = pos.array as Float32Array;
+      candidates.push({
+        o,
+        el,
+        parentPos,
+        ratio,
+        // What you are looking at always wins. Otherwise prefer prominent objects whose
+        // orbit is a sensible size on screen rather than a speck or a stray line.
+        priority: selected ? 1e6 : o.weight * 10 + (ratio > 0.12 && ratio < 6 ? 5 : 0),
+      });
+    }
 
-      // Parent-relative km -> scene units, done on the CPU because the offset changes
-      // every frame and a per-object matrix cannot express both offset and scale here.
-      const ox = (parentPos[0] - f.focus[0]) * s;
-      const oy = (parentPos[1] - f.focus[1]) * s;
-      const oz = (parentPos[2] - f.focus[2]) * s;
-      for (let i = 0; i < count; i++) {
-        arr[i * 3] = entry.source[i * 3]! * s + ox;
-        arr[i * 3 + 1] = entry.source[i * 3 + 1]! * s + oy;
-        arr[i * 3 + 2] = entry.source[i * 3 + 2]! * s + oz;
-      }
-      pos.needsUpdate = true;
-      entry.line.geometry.computeBoundingSphere();
+    candidates.sort((a, b) => b.priority - a.priority);
+    const budget = f.orbitBudget;
+
+    for (const c of candidates.slice(0, budget)) {
+      const { o, el, parentPos, ratio } = c;
+      const selected = o.id === f.selectedId || o.id === f.trackedId;
+      const overscaleFade = ratio > 4 ? Math.max(0.12, 1 - (ratio - 4) / 18) : 1;
+
+      const entry = this.ensureOrbit(o.id, el, f.jd, o.color, o.parent, segmentsFor(ratio, selected));
+
+      // The whole transform is a uniform scale plus a translation:
+      //   scene = (parentRelativeKm + parentPos - focus) * renderScale
+      // so it can be expressed as the object's own scale and position and left to the
+      // GPU, instead of rewriting every vertex on the CPU each frame.
+      entry.line.scale.setScalar(s);
+      entry.line.position.set(
+        (parentPos[0] - f.focus[0]) * s,
+        (parentPos[1] - f.focus[1]) * s,
+        (parentPos[2] - f.focus[2]) * s,
+      );
 
       const mat = entry.line.material as THREE.LineBasicMaterial;
       mat.color.set(o.color);
-      mat.opacity = selected ? 0.85 : o.phaseUnknown ? 0.3 : 0.26;
+      mat.opacity = (selected ? 0.92 : o.phaseUnknown ? 0.34 : 0.44) * overscaleFade;
       entry.line.visible = true;
       wanted.add(o.id);
     }
@@ -543,16 +574,18 @@ export class SpaceScene {
     jd: number,
     color: string,
     parentId: string | null,
+    segments: number,
   ): OrbitEntry {
     // Open orbits are re-sampled as time moves because the drawn arc follows the object.
     const open = el.e >= 1;
-    const signature = `${el.a.toFixed(3)}|${el.e.toFixed(6)}|${el.i.toFixed(6)}|${el.om.toFixed(6)}|${el.w.toFixed(6)}|${open ? Math.round(jd / 30) : 0}`;
+    // The segment count is part of the signature so a change of detail level rebuilds the
+    // geometry once, rather than every frame.
+    const signature = `${el.a.toFixed(3)}|${el.e.toFixed(6)}|${el.i.toFixed(6)}|${el.om.toFixed(6)}|${el.w.toFixed(6)}|${open ? Math.round(jd / 30) : 0}|${segments}`;
 
     const existing = this.orbits.get(id);
     if (existing && existing.signature === signature) return existing;
 
-    const segments = open ? 160 : 256;
-    const pts = sampleOrbit(el, segments, jd);
+    const pts = sampleOrbit(el, open ? Math.min(segments, 160) : segments, jd);
     const source = new Float32Array(pts.length * 3);
     pts.forEach((p, i) => {
       source[i * 3] = p[0];
@@ -564,7 +597,7 @@ export class SpaceScene {
     if (!entry || entry.source.length !== source.length) {
       entry?.line.geometry.dispose();
       const geom = new THREE.BufferGeometry();
-      geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(source.length), 3));
+      geom.setAttribute('position', new THREE.BufferAttribute(source, 3));
       const line = new THREE.Line(
         geom,
         new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.3, depthWrite: false }),
@@ -574,6 +607,10 @@ export class SpaceScene {
       this.orbitGroup.add(line);
       entry = { line, source, signature, parentId };
     } else {
+      // Same vertex count: reuse the buffer and upload only when the conic changed.
+      const attr = entry.line.geometry.getAttribute('position') as THREE.BufferAttribute;
+      (attr.array as Float32Array).set(source);
+      attr.needsUpdate = true;
       entry.source = source;
       entry.signature = signature;
     }
@@ -600,15 +637,21 @@ export class SpaceScene {
         continue;
       }
 
+      // Vertices are kept in heliocentric kilometres and uploaded only when the sampled
+      // epoch actually moves. Per frame this is a scale and a translation, so several
+      // thousand particles cost one matrix update instead of a CPU pass over the buffer.
       const source = f.cloudPositionsFor(cloud, f.jd);
-      const attr = pts.geometry.getAttribute('position') as THREE.BufferAttribute;
-      const arr = attr.array as Float32Array;
-      for (let i = 0; i < arr.length; i += 3) {
-        arr[i] = (source[i]! - f.focus[0]) * s;
-        arr[i + 1] = (source[i + 1]! - f.focus[1]) * s;
-        arr[i + 2] = (source[i + 2]! - f.focus[2]) * s;
+      const uploaded = this.cloudUploads.get(cloud.id);
+      if (uploaded !== source || this.cloudEpochs.get(cloud.id) !== f.cloudEpoch) {
+        const attr = pts.geometry.getAttribute('position') as THREE.BufferAttribute;
+        (attr.array as Float32Array).set(source);
+        attr.needsUpdate = true;
+        this.cloudUploads.set(cloud.id, source);
+        this.cloudEpochs.set(cloud.id, f.cloudEpoch);
       }
-      attr.needsUpdate = true;
+
+      pts.scale.setScalar(s);
+      pts.position.set(-f.focus[0] * s, -f.focus[1] * s, -f.focus[2] * s);
       pts.visible = true;
     }
   }
@@ -730,6 +773,54 @@ export class SpaceScene {
     this.trailLine.geometry.computeBoundingSphere();
   }
 
+  /**
+   * Find the nearest particle-cloud member to a screen point.
+   *
+   * The clouds are drawn as one Points buffer each, so they are invisible to the marker
+   * hit-test the overlay does. Projecting a few thousand points is far too much work for
+   * every frame, but it is nothing on a single tap — which is the only time the answer is
+   * needed. That is what makes a belt of thousands of bodies clickable at all.
+   */
+  pickCloudPoint(opts: {
+    clouds: ParticleCloud[];
+    positionsFor: (cloud: ParticleCloud) => Float32Array;
+    focus: Vec3;
+    scale: number;
+    x: number;
+    y: number;
+    radiusPx: number;
+  }): { cloudId: string; index: number } | null {
+    const v = new THREE.Vector3();
+    const halfW = this.viewWidth / 2;
+    const halfH = this.viewHeight / 2;
+    let best: { cloudId: string; index: number } | null = null;
+    let bestDistance = opts.radiusPx;
+
+    for (const cloud of opts.clouds) {
+      const positions = opts.positionsFor(cloud);
+      const count = cloud.elements.length;
+      for (let i = 0; i < count; i++) {
+        v.set(
+          (positions[i * 3]! - opts.focus[0]) * opts.scale,
+          (positions[i * 3 + 1]! - opts.focus[1]) * opts.scale,
+          (positions[i * 3 + 2]! - opts.focus[2]) * opts.scale,
+        );
+        // Cheap reject before the full projection: anything absurdly far is off screen.
+        if (v.lengthSq() > FAR_CULL * FAR_CULL) continue;
+        v.project(this.camera);
+        if (v.z > 1) continue;
+        const sx = (v.x + 1) * halfW;
+        const sy = (1 - v.y) * halfH;
+        const d = Math.hypot(sx - opts.x, sy - opts.y);
+        if (d < bestDistance) {
+          bestDistance = d;
+          best = { cloudId: cloud.id, index: i };
+        }
+      }
+    }
+    return best;
+  }
+
   render(): void {
     this.renderer.render(this.scene, this.camera);
   }
@@ -739,6 +830,20 @@ export class SpaceScene {
     SPHERE.dispose();
     SPHERE_LOW.dispose();
   }
+}
+
+/**
+ * Segments for an orbit, from how big it is on screen.
+ *
+ * Quantised to three levels so crossing a threshold rebuilds the geometry once instead of
+ * every frame. A track a tenth of the view across is indistinguishable at 64 segments
+ * from 256, and costs a quarter as much to rasterise.
+ */
+function segmentsFor(ratio: number, selected: boolean): number {
+  if (selected) return 256;
+  if (ratio < 0.35) return 64;
+  if (ratio < 2.5) return 128;
+  return 256;
 }
 
 function parentPosition(f: FrameInput, parentId: string | null): Vec3 | null {

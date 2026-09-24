@@ -1,6 +1,9 @@
 import { AU_KM, DEG, GM, RADIUS } from '../astro/constants';
 import { elementsFromDegrees, wrap2Pi, type Elements } from '../astro/kepler';
 import { PLANET_IDS, planetElements, type PlanetId } from '../astro/planets';
+import { buildMoons } from './moons';
+import { buildSmallBodies } from './smallbodies';
+import { buildSpacecraft } from './spacecraft';
 import type { Provenance, SpaceObject } from './types';
 
 /**
@@ -183,28 +186,8 @@ function planetObjects(): SpaceObject[] {
 // Moons
 // ---------------------------------------------------------------------------
 
-/**
- * Mean elements for the major satellites, referred to their planet's equator and
- * published by JPL. Angles below are given in the J2000 ecliptic frame already, which is
- * why the inclinations are large for the Jovian moons — they include the planet's tilt.
- */
-const MOONS: ReadonlyArray<{
-  id: string; name: string; parent: PlanetId; radiusKm: number; color: string; weight: number;
-  aKm: number; e: number; iDeg: number; omDeg: number; wDeg: number; m0Deg: number; facts: [string, string][];
-}> = [
-  { id: 'io', name: 'IO', parent: 'jupiter', radiusKm: 1821.6, color: '#d8c56a', weight: 0.55, aKm: 421_800, e: 0.0041, iDeg: 2.21, omDeg: 336.9, wDeg: 84.1, m0Deg: 342.0, facts: [['Volcanism', 'Most active body known'], ['Orbital period', '1.77 days']] },
-  { id: 'europa', name: 'EUROPA', parent: 'jupiter', radiusKm: 1560.8, color: '#cbb89c', weight: 0.6, aKm: 671_100, e: 0.0094, iDeg: 1.79, omDeg: 332.6, wDeg: 88.9, m0Deg: 171.0, facts: [['Subsurface ocean', 'Probable, ~100 km deep'], ['Orbital period', '3.55 days']] },
-  { id: 'ganymede', name: 'GANYMEDE', parent: 'jupiter', radiusKm: 2634.1, color: '#9e9384', weight: 0.55, aKm: 1_070_400, e: 0.0013, iDeg: 2.21, omDeg: 343.0, wDeg: 192.4, m0Deg: 317.5, facts: [['Size', 'Largest moon in the Solar System'], ['Magnetic field', 'Its own']] },
-  { id: 'callisto', name: 'CALLISTO', parent: 'jupiter', radiusKm: 2410.3, color: '#7d7468', weight: 0.5, aKm: 1_882_700, e: 0.0074, iDeg: 2.02, omDeg: 337.9, wDeg: 52.6, m0Deg: 181.4, facts: [['Surface', 'Most heavily cratered known'], ['Orbital period', '16.7 days']] },
-  { id: 'titan', name: 'TITAN', parent: 'saturn', radiusKm: 2574.7, color: '#d3a15c', weight: 0.6, aKm: 1_221_870, e: 0.0288, iDeg: 27.7, omDeg: 169.1, wDeg: 185.7, m0Deg: 15.2, facts: [['Atmosphere', 'Denser than Earth’s'], ['Surface liquid', 'Methane lakes']] },
-  { id: 'enceladus', name: 'ENCELADUS', parent: 'saturn', radiusKm: 252.1, color: '#e4e7ea', weight: 0.5, aKm: 238_040, e: 0.0047, iDeg: 28.05, omDeg: 169.5, wDeg: 119.5, m0Deg: 57.0, facts: [['Plumes', 'Water vapour from south-polar fractures'], ['Albedo', 'Brightest in the Solar System']] },
-  { id: 'triton', name: 'TRITON', parent: 'neptune', radiusKm: 1353.4, color: '#b9c6cc', weight: 0.5, aKm: 354_760, e: 0.000016, iDeg: 130.0, omDeg: 178.1, wDeg: 66.1, m0Deg: 352.2, facts: [['Orbit', 'Retrograde — probably captured'], ['Surface', 'Nitrogen geysers']] },
-  { id: 'phobos', name: 'PHOBOS', parent: 'mars', radiusKm: 11.27, color: '#8a7f74', weight: 0.35, aKm: 9_376, e: 0.0151, iDeg: 26.04, omDeg: 84.9, wDeg: 150.1, m0Deg: 91.1, facts: [['Orbital period', '7 h 39 m — faster than Mars rotates'], ['Fate', 'Spiralling inward']] },
-  { id: 'deimos', name: 'DEIMOS', parent: 'mars', radiusKm: 6.2, color: '#8a7f74', weight: 0.3, aKm: 23_463, e: 0.0002, iDeg: 27.58, omDeg: 84.0, wDeg: 260.7, m0Deg: 325.3, facts: [['Diameter', '12.4 km'], ['Orbital period', '30.3 hours']] },
-];
-
 function moonObjects(): SpaceObject[] {
-  const out: SpaceObject[] = [
+  return [
     {
       id: 'moon',
       name: 'MOON',
@@ -217,7 +200,7 @@ function moonObjects(): SpaceObject[] {
       provenance: P_MOON,
       soiKm: soi(384_400, GM.moon, GM.earth),
       ephemeris: { kind: 'luna' },
-      tags: ['moon', 'solar-system'],
+      tags: ['moon', 'solar-system', 'earth'],
       aliases: ['luna'],
       facts: [
         { label: 'Mean distance', value: '384 400 km' },
@@ -227,32 +210,10 @@ function moonObjects(): SpaceObject[] {
       ],
       status: 'TRACKED',
     },
+    // Every other natural satellite. Earth's Moon keeps its own analytic theory above;
+    // the rest come from published mean elements in their planet's equatorial frame.
+    ...buildMoons(),
   ];
-
-  for (const m of MOONS) {
-    out.push({
-      id: m.id,
-      name: m.name,
-      subtitle: `MOON OF ${m.parent.toUpperCase()}`,
-      kind: 'moon',
-      parent: m.parent,
-      radiusKm: m.radiusKm,
-      color: m.color,
-      weight: m.weight,
-      provenance: P_MAJOR_MOON,
-      ephemeris: {
-        kind: 'elements',
-        elements: satellite({
-          aKm: m.aKm, e: m.e, iDeg: m.iDeg, omDeg: m.omDeg, wDeg: m.wDeg, m0Deg: m.m0Deg,
-          epoch: 2451545.0, mu: GM[m.parent],
-        }),
-      },
-      tags: ['moon', 'solar-system'],
-      facts: m.facts.map(([label, value]) => ({ label, value })),
-      status: 'TRACKED',
-    });
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -506,7 +467,16 @@ export const SUN: SpaceObject = {
 
 /** The full built-in catalogue, in no particular order. */
 export function buildCatalog(): SpaceObject[] {
-  return [SUN, ...planetObjects(), ...moonObjects(), ...probeObjects(), ...INNER_MISSIONS, ...smallBodyObjects()];
+  return [
+    SUN,
+    ...planetObjects(),
+    ...moonObjects(),
+    ...probeObjects(),
+    ...INNER_MISSIONS,
+    ...smallBodyObjects(),
+    ...buildSmallBodies(),
+    ...buildSpacecraft(),
+  ];
 }
 
 export { heliocentric as catalogElements, jdOf as catalogJd };

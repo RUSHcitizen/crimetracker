@@ -108,6 +108,15 @@ export interface SpaceObject {
   /** Set when the object is real but its position along the orbit is unknown offline. */
   phaseUnknown?: boolean;
   /**
+   * Set when the object IS placed, but its phase along the orbit was not fitted to an
+   * ephemeris — the orbit's size, shape and tilt are published, the position on it is a
+   * fixed synthetic value. Distinct from `phaseUnknown`, which is not placed at all.
+   *
+   * Acceptable for a satellite, where the error is bounded by its orbit around its
+   * planet. Not acceptable for a heliocentric body, where it would be two orbit radii.
+   */
+  phaseSynthetic?: boolean;
+  /**
    * Radius of this body's sphere of influence about its parent, km — the boundary inside
    * which it, rather than the parent, dominates a small object's motion. This is what the
    * GRAVITY layer draws; it is a defined quantity, r = a·(m/M)^(2/5), not a decoration.

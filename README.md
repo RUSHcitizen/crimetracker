@@ -30,7 +30,8 @@ npm run deploy       # Cloudflare Workers, via wrangler
 | **Missions** | Eleven challenges generated from live measurements. "Find the spacecraft farthest from Earth" is answered by measuring, so it is verified honestly and changes as time moves. Progress is local; no account. |
 | **What if** | Move the Earth, move the Moon, change an orbital velocity, change the Sun's mass. Exact two-body consequences, clearly labelled as simulation, with the limits of the model stated. |
 | **Gravity** | Spheres of influence — `r = a·(m/M)^⅖` — drawn where they actually fall and captioned with their real radius. No gravity beams. |
-| **Search** | Type three letters, press enter, fly there. |
+| **Search** | Type three letters, press enter, fly there. Over 180 named objects. |
+| **Poke the belt** | Every particle in the asteroid, Hilda, Trojan, Kuiper and near-Earth populations is selectable. Tap one and you get its real orbital mechanics — and a badge saying it is not a real body. |
 | **Offline** | Installable PWA. The planets, the Moon, the Lagrange points and every orbit are computed in your browser, so the whole thing works on a plane. |
 
 ---
@@ -55,17 +56,47 @@ a placeholder position.
 
 ### Data sources
 
+### Census
+
+| | Count |
+|---|---|
+| Catalogued objects (named, real) | **180** — 1 star, 8 planets, 13 dwarf planets, 66 moons, 31 spacecraft, 48 asteroids, 11 comets, 3 interstellar objects |
+| Demonstration orbital shells (simulated, labelled) | 89 |
+| Small-body population members (simulated, labelled, selectable) | 5 240 |
+| **Total selectable** | **5 509** |
+
+Moons of six planets — Mars, Jupiter, Saturn, Uranus, Neptune and Pluto — are carried, from
+the Galilean four down to 8 km ring shepherds.
+
+### Data sources
+
 | Dataset | Source | Epoch / cadence | Accuracy | Limitations |
 |---|---|---|---|---|
 | **Planets** | E. M. Standish, *Keplerian Elements for Approximate Positions of the Major Planets* (JPL SSD) | Analytical; no refresh | Sub-arcminute heliocentric longitude for the inner planets, 1800–2050 | Secular rates only, no planetary perturbations. Error grows outside that window; Pluto is worst. Not for navigation or occultation prediction. |
 | **Moon** | Meeus, *Astronomical Algorithms* 2nd ed. ch. 47 (ELP-2000/82 truncation) | Analytical; no refresh | ~10″ in longitude, a few km in distance | 51 largest periodic terms of a much longer series. Degrades away from the present century. |
 | **Earth satellites** | CelesTrak GP (republished US Space Force catalogue), via `/api/tle` | TLE epochs hours to days old; refetched every 30 min at the edge | Kilometres near epoch, degrading roughly linearly | Near-Earth SGP4 only. Objects with period ≥ 225 min (GEO, Molniya, GNSS) need deep-space SDP4, which this build does not have — they are **refused rather than propagated badly**. |
 | **Deep-space probes** | Published mission distance, speed and escape direction (NASA/JPL), upgraded to real state vectors from **JPL Horizons** via `/api/horizons` when reachable | Static fallback; Horizons cached 12 h | Fallback: ±~1 AU and ~1° of direction. Horizons: JPL's own solution | The fallback is a straight-line model — valid because solar gravity beyond 100 AU changes the speed by centimetres per second per year, but it is a model, not a trajectory solution. |
-| **Small bodies** | Published osculating elements (JPL SBDB) | Static | Orbit shape good; position along orbit approximate | A single unperturbed conic. No planetary perturbations, no non-gravitational forces. Close-approach geometry from this model is indicative only. |
+| **Natural satellites** | Published mean elements for the satellites (IAU / JPL SSD), quoted in each planet's equatorial frame and converted here from its IAU pole | Static | Orbit size, shape and tilt are published values. 22 published periods are asserted in the test suite and match to within 1.5%. | Node and periapsis longitudes are not carried, so the phase along the orbit is synthetic. Fine for seeing a system's structure; useless for predicting an eclipse. |
+| **Small bodies** | Published osculating elements (JPL SBDB) | Static | Orbit shape good | Split in two. Where the perihelion epoch is well established the body is placed. Where it is not, the orbit is drawn and the body is **not** placed — every readout shows a dash rather than a distance derived from an invented phase. |
+| **Spacecraft in orbit** | Published mission orbit parameters (NASA / ESA / JAXA / CNSA / KARI) | Static | The orbit each craft occupies — altitude, eccentricity, inclination — so period and speed are right. | Phase is synthetic, and orbits are shown as they are today rather than as they evolved. Anything mid-cruise between worlds is deliberately absent rather than drawn as a conic it is not on. |
 | **Close approaches** | NASA/JPL CAD API via `/api/close-approaches` | Cached 6 h | JPL's numerically integrated solutions | Far more accurate than this app's own model. **Where the two disagree, JPL is right** — and the DATA panel says so. |
 | **Geomagnetic activity** | NOAA SWPC planetary K-index via `/api/space-weather` | 1-minute product, cached 5 min | NOAA's own estimate | Kp is a 3-hour global average estimated in near real time and revised later. |
 | **Bright stars** | 20 catalogue stars at published J2000 RA/Dec and magnitude | Static | Real positions | Used for orientation only, so "Voyager 1 is heading into Ophiuchus" means something. |
 | **Background sky** | Procedurally scattered points | — | **Not data** | Decoration. Never labelled, never searchable, carries no astronomical content. |
+
+### Three degrees of "placed"
+
+The app distinguishes them in the UI, because collapsing them would be the easiest way to
+lie:
+
+- **Placed and fitted** — planets, the Moon, live satellites, comets with a known
+  perihelion. Every readout means what it says.
+- **Placed, phase synthetic** (cyan banner: `ORBIT IS REAL — POSITION ALONG IT IS NOT
+  FITTED`) — moons and orbiting spacecraft. The orbit is published; where the body sits on
+  it is not. Acceptable here because the error is bounded by the orbit around its planet.
+- **Not placed** (amber banner: `POSITION NOT AVAILABLE — ORBIT SHOWN, BODY NOT PLACED`) —
+  heliocentric small bodies with no established perihelion epoch. A synthetic phase would
+  put them up to two orbit radii from the truth, so they get none.
 
 ### Simulated populations, and why they exist
 
@@ -73,8 +104,11 @@ The real asteroid belt has millions of members and real LEO has thousands of obj
 Shipping either would mean a huge download or a pile of invented catalogue entries. Instead
 the app generates populations whose **statistics** match the published ones — the Kirkwood
 gaps are at 2.50/2.83/2.96/3.28 AU, the Trojans librate about Jupiter's L4/L5, the plutinos
-cluster at the 3:2 resonance, the orbital shells sit at the real ISS, sun-synchronous, GNSS
-and broadband altitudes and inclinations — and labels every one of them `SIMULATED`. The
+cluster at the 3:2 resonance, the Hildas trace their rotating triangle at Jupiter's 3:2,
+the near-Earth mix is the real Aten/Apollo/Amor split, and the orbital shells sit at the
+real ISS, sun-synchronous, GNSS, polar and broadband altitudes and inclinations — and
+labels every one of them `SIMULATED`. Each particle is individually selectable, and its
+panel opens with the tier badge and `SIMULATED — NOT A REAL OBJECT`. The
 orbital mechanics you watch are correct; the individual bodies are fictitious, and the app
 never pretends otherwise. One of the missions is to go and find one.
 
@@ -161,11 +195,25 @@ time — it would record where the camera has been, not where the object has.
 
 ### Performance
 
-Level-of-detail by apparent angular size (globe → cheap globe → marker only), orbit
-geometry cached per object and merely repositioned each frame, particle clouds refreshed
-only when time has moved more than 0.4 days, device pixel ratio capped at 2, a label budget
-that scales with viewport width, and hard distance culling. Minor objects never spend label
-budget unless selected.
+Level-of-detail by apparent angular size (globe → cheap globe → marker only), device pixel
+ratio capped at 2, label and orbit budgets that scale with viewport width, and hard
+distance culling. Minor objects never spend label budget unless selected.
+
+Three things carry most of the weight at this catalogue size, each found by measuring
+rather than guessing — an A/B of every layer showed orbit tracks alone halving the frame
+rate:
+
+- **Orbit and particle transforms belong to the GPU.** Both are a uniform scale plus a
+  translation, so they are expressed as an object's `scale` and `position` instead of
+  rewriting thousands of vertices on the CPU every frame.
+- **Orbit tracks are budgeted and level-of-detailed.** At most 26 tracks on a phone, chosen
+  by prominence and on-screen size, at 64/128/256 segments by apparent size. The selected
+  object is always inside the budget.
+- **The trajectory trail is cached.** It is 181 ephemeris evaluations; recomputing it every
+  frame while tracking was the single most expensive thing the app did.
+
+Measured on a software rasteriser (no GPU), which is the worst case by a wide margin:
+21 → 30 fps at solar-system scale with all 5 509 objects and every layer on.
 
 ---
 

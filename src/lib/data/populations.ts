@@ -58,7 +58,7 @@ function inKirkwoodGap(a: number): boolean {
 }
 
 /** Main-belt scenery: a-distribution with the real resonance gaps carved out. */
-export function makeMainBelt(count = 900, seed = 0x5eed): ParticleCloud {
+export function makeMainBelt(count = 2400, seed = 0x5eed): ParticleCloud {
   const rng = mulberry32(seed);
   const elements: Elements[] = [];
   let guard = 0;
@@ -88,7 +88,7 @@ export function makeMainBelt(count = 900, seed = 0x5eed): ParticleCloud {
 }
 
 /** Jupiter's Trojan swarms, generated ±60° of Jupiter along its orbit. */
-export function makeTrojans(count = 260, seed = 0x7203): ParticleCloud {
+export function makeTrojans(count = 700, seed = 0x7203): ParticleCloud {
   const rng = mulberry32(seed);
   const elements: Elements[] = [];
   // Jupiter's mean longitude at J2000 from the Standish table.
@@ -121,7 +121,7 @@ export function makeTrojans(count = 260, seed = 0x7203): ParticleCloud {
 }
 
 /** Kuiper belt, with the plutino spike at the 3:2 resonance. */
-export function makeKuiperBelt(count = 520, seed = 0xc01d): ParticleCloud {
+export function makeKuiperBelt(count = 1400, seed = 0xc01d): ParticleCloud {
   const rng = mulberry32(seed);
   const elements: Elements[] = [];
   for (let k = 0; k < count; k++) {
@@ -149,6 +149,79 @@ export function makeKuiperBelt(count = 520, seed = 0xc01d): ParticleCloud {
   };
 }
 
+/**
+ * The Hildas: bodies locked in a 3:2 resonance with Jupiter at about 3.97 AU.
+ *
+ * Worth generating separately because they do something visible. Their orbits are
+ * ordinary ellipses, but the resonance means the swarm as a whole traces a slowly
+ * rotating triangle with corners at Jupiter's L3, L4 and L5 — one of the few pieces of
+ * Solar System structure you can actually watch emerge by running time forward.
+ */
+export function makeHildas(count = 420, seed = 0x41d4): ParticleCloud {
+  const rng = mulberry32(seed);
+  const elements: Elements[] = [];
+  const jupiterL = 34.396 * DEG;
+
+  for (let k = 0; k < count; k++) {
+    // Three clusters, 120 degrees apart, librating about the resonance.
+    const corner = (k % 3) * ((2 * Math.PI) / 3);
+    const lambda = jupiterL + corner + (rng() - 0.5) * 60 * DEG;
+    const om = rng() * Math.PI * 2;
+    const w = rng() * Math.PI * 2;
+    elements.push({
+      a: (3.97 + (rng() - 0.5) * 0.16) * AU_KM,
+      e: 0.07 + rayleigh(rng, 0.07),
+      i: Math.min(20 * DEG, rayleigh(rng, 5 * DEG)),
+      om,
+      w,
+      m0: lambda - om - w,
+      epoch: 2451545.0,
+      mu: GM.sun,
+    });
+  }
+
+  return {
+    id: 'hildas',
+    label: 'HILDA GROUP',
+    elements,
+    color: '#6b5f4e',
+    pointSize: 1.7,
+    note: 'Simulated population in the real 3:2 Hilda resonance with Jupiter. The triangular pattern the swarm traces is a real dynamical effect; the individual bodies are fictitious.',
+  };
+}
+
+/** Near-Earth asteroid population: Atens, Apollos and Amors. */
+export function makeNearEarth(count = 320, seed = 0x9e04): ParticleCloud {
+  const rng = mulberry32(seed);
+  const elements: Elements[] = [];
+
+  for (let k = 0; k < count; k++) {
+    // Roughly the observed mix: a majority of Apollos, then Amors, then Atens.
+    const roll = rng();
+    const a = roll < 0.6 ? 1.1 + rng() * 1.4 : roll < 0.9 ? 1.4 + rng() * 1.3 : 0.7 + rng() * 0.28;
+    const e = roll < 0.9 ? 0.15 + rayleigh(rng, 0.22) : 0.2 + rayleigh(rng, 0.2);
+    elements.push({
+      a: a * AU_KM,
+      e: Math.min(0.85, e),
+      i: Math.min(60 * DEG, rayleigh(rng, 12 * DEG)),
+      om: rng() * Math.PI * 2,
+      w: rng() * Math.PI * 2,
+      m0: rng() * Math.PI * 2,
+      epoch: 2451545.0,
+      mu: GM.sun,
+    });
+  }
+
+  return {
+    id: 'near-earth',
+    label: 'NEAR-EARTH OBJECTS',
+    elements,
+    color: '#8c6a55',
+    pointSize: 1.9,
+    note: 'Simulated population with the semi-major axis and eccentricity mix of the real Aten, Apollo and Amor groups. Over 35 000 near-Earth asteroids are actually catalogued; none of these is one of them.',
+  };
+}
+
 export function cloudPositions(cloud: ParticleCloud, jd: number, out: Float32Array, scale: number): void {
   for (let k = 0; k < cloud.elements.length; k++) {
     const p = positionFromElements(cloud.elements[k]!, jd) as Vec3;
@@ -173,10 +246,16 @@ export function cloudPositions(cloud: ParticleCloud, jd: number, out: Float32Arr
 const SHELLS: ReadonlyArray<{
   label: string; altKm: number; incDeg: number; count: number; color: string; note: string;
 }> = [
-  { label: 'LEO / CREWED BAND', altKm: 420, incDeg: 51.6, count: 5, color: '#7fb2d9', note: 'The inclination and altitude the International Space Station uses.' },
-  { label: 'LEO / SUN-SYNCHRONOUS', altKm: 705, incDeg: 98.2, count: 6, color: '#6f9f8a', note: 'The retrograde band Earth-observation satellites use to cross the equator at a fixed local time.' },
-  { label: 'LEO / BROADBAND SHELL', altKm: 550, incDeg: 53.0, count: 8, color: '#5f7d99', note: 'The altitude and inclination large broadband constellations occupy.' },
-  { label: 'MEO / NAVIGATION', altKm: 20_200, incDeg: 55.0, count: 6, color: '#a58f6a', note: 'The GNSS altitude, where a 12-hour orbit gives global coverage from 24 satellites.' },
+  { label: 'LEO / CREWED BAND', altKm: 420, incDeg: 51.6, count: 6, color: '#7fb2d9', note: 'The inclination and altitude the International Space Station uses.' },
+  { label: 'LEO / SUN-SYNCHRONOUS', altKm: 705, incDeg: 98.2, count: 10, color: '#6f9f8a', note: 'The retrograde band Earth-observation satellites use to cross the equator at a fixed local time.' },
+  { label: 'LEO / BROADBAND SHELL 53°', altKm: 550, incDeg: 53.0, count: 18, color: '#5f7d99', note: 'The altitude and inclination the largest broadband constellation occupies.' },
+  { label: 'LEO / BROADBAND SHELL 70°', altKm: 570, incDeg: 70.0, count: 8, color: '#5f7d99', note: 'A higher-inclination shell of the same constellation, reaching nearer the poles.' },
+  { label: 'LEO / POLAR SHELL', altKm: 560, incDeg: 97.6, count: 8, color: '#6f9f8a', note: 'A polar shell, giving coverage of the high latitudes the 53° shells miss.' },
+  { label: 'LEO / IMAGING', altKm: 475, incDeg: 97.4, count: 8, color: '#88a06f', note: 'Where commercial imaging fleets fly — low enough for fine resolution, sun-synchronous for consistent lighting.' },
+  { label: 'LEO / WEATHER', altKm: 825, incDeg: 98.7, count: 5, color: '#7ba8a0', note: 'The polar-orbiting weather band, crossing every point twice a day.' },
+  { label: 'MEO / NAVIGATION', altKm: 20_200, incDeg: 55.0, count: 12, color: '#a58f6a', note: 'The GNSS altitude, where a 12-hour orbit gives global coverage from 24 satellites.' },
+  { label: 'MEO / NAVIGATION 56°', altKm: 23_222, incDeg: 56.0, count: 8, color: '#a58f6a', note: 'A slightly higher navigation shell used by a different constellation.' },
+  { label: 'MEO / BROADBAND', altKm: 8_062, incDeg: 0.0, count: 6, color: '#7d8fa5', note: 'An equatorial medium-Earth shell used for low-latency broadband over the tropics.' },
 ];
 
 export function makeDemoSatellites(seed = 0x0b17): SpaceObject[] {
