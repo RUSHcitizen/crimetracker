@@ -196,9 +196,10 @@ The client only ever talks to this Worker.
 
 ## Deploying
 
-The Worker is named `space`, so a first successful deploy publishes it at
-`https://space.<your-subdomain>.workers.dev`. (The interface is still called SPACE RADAR —
-only the deployment target is named after the repository.)
+The Worker is named `spacesight`, which must match the Worker the deploy is meant to land
+on — `wrangler deploy` writes to whatever `name` says here, not to whatever service the
+build was launched from. It publishes at `https://spacesight.<your-subdomain>.workers.dev`.
+(The interface is still called SPACE RADAR; this is only the deployment target.)
 
 Three ways, in order of least setup:
 
